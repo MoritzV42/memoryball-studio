@@ -97,19 +97,18 @@ python main.py --gui
 3. Videos werden automatisch mitbearbeitet und nutzen die gleichen Einstellungen.
 4. Mit „Konvertieren“ die Ausgabe erstellen; der Fortschritt wird angezeigt.
 
-### Windows-Start (Doppelklick)
+### Start per Doppelklick
 
 * Stelle sicher, dass Python 3.10+ installiert ist und dass `python` im `%PATH%` liegt.
-* Installiere die Abhängigkeiten einmalig mit:
-
-  ```powershell
-  python -m pip install -r requirements.txt
-  ```
-
-* Danach kannst du die App einfach per Doppelklick auf `main.py` oder `start-memoryball.bat` starten.
-  * `start-memoryball.bat` lässt das Terminal bei Fehlern offen, schreibt alle Fehlermeldungen in `startup-errors.log` und blendet das Protokoll sofort ein.
-  * Bei fehlenden Bibliotheken erscheint eine verständliche Fehlermeldung mit Lösungsvorschlägen (z. B. für Tkinter, Pillow oder OpenCV).
-* Auch beim Doppelklick auf `main.py` wird der Fehler im gleichen Log abgelegt, sodass du ihn jederzeit nachlesen kannst.
+* Starte das Tool über `start.py` (Doppelklick oder `python start.py`).
+  * Beim ersten Start versucht die Datei zunächst, die Anwendung direkt zu starten.
+  * Schlägt das fehl, legt sie automatisch eine virtuelle Umgebung im Projektordner an,
+    installiert alle Abhängigkeiten aus `requirements.txt` und startet danach erneut.
+  * Sobald der Start klappt, wird bei späteren Aufrufen ausschließlich die Anwendung
+    gestartet – eine erneute Installation findet nur statt, wenn der Startcode
+    einen Fehler zurückgibt.
+* Auch beim direkten Start über `main.py` werden Fehler weiterhin in
+  `startup-errors.log` protokolliert.
 
 ## Performance-Tipps
 
