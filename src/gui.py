@@ -29,12 +29,19 @@ class Application(tk.Tk):
     """Tkinter-Anwendung mit Vorschau und manueller Zuschnittssteuerung."""
 
     CANVAS_SIZE = 520
+    DETECTION_CHOICES = [
+        ("face", "Gesichtserkennung"),
+        ("person", "Menscherkennung"),
+        ("none", "Keine Erkennung"),
+    ]
 
     def __init__(self) -> None:
         super().__init__()
         self.title("MemoryBall Studio")
         self.geometry("960x640")
         self.minsize(900, 600)
+
+        self._configure_style()
 
         self.input_path: Optional[Path] = None
         self.media_files: list[Path] = []
@@ -48,7 +55,10 @@ class Application(tk.Tk):
 
         self.input_var = tk.StringVar()
         self.output_var = tk.StringVar()
-        self.face_detection_var = tk.BooleanVar(value=True)
+        self._detection_value_by_label = {label: value for value, label in self.DETECTION_CHOICES}
+        self._detection_label_by_value = {value: label for value, label in self.DETECTION_CHOICES}
+        self.detection_mode_var = tk.StringVar(value=self._detection_label_by_value["face"])
+        self._last_detection_mode = "face"
         self.size_var = tk.IntVar(value=480)
         self.size_ratio = tk.DoubleVar(value=1.0)
         self.offset_x = tk.DoubleVar(value=0.0)
@@ -57,62 +67,180 @@ class Application(tk.Tk):
         self.crop_info_var = tk.StringVar(value="Kein Bild ausgewählt.")
 
         self._build_layout()
-        self.face_detection_var.trace_add("write", self._on_face_detection_toggle)
+        self.detection_mode_var.trace_add("write", self._on_detection_change)
 
     # ------------------------------------------------------------------
     # Layout & UI
     # ------------------------------------------------------------------
+    def _configure_style(self) -> None:
+        background = "#0f111a"
+        card_background = "#161a27"
+        accent = "#3f8efc"
+        self.configure(background=background)
+        self.option_add("*Font", "Segoe UI 10")
+        self.option_add("*Label.font", "Segoe UI 10")
+        self.option_add("*Entry.background", card_background)
+        self.option_add("*Entry.foreground", "#f5f7fa")
+        self.option_add("*Entry.insertBackground", "#f5f7fa")
+        self.option_add("*Spinbox.background", card_background)
+        self.option_add("*Spinbox.foreground", "#f5f7fa")
+        self.option_add("*Spinbox.insertBackground", "#f5f7fa")
+        self.option_add("*TCombobox*Listbox.background", card_background)
+        self.option_add("*TCombobox*Listbox.foreground", "#f5f7fa")
+        self.option_add("*TCombobox*Listbox.selectBackground", accent)
+        self.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
+
+        style = ttk.Style(self)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        style.configure("TFrame", background=background)
+        style.configure("Card.TFrame", background=card_background, relief="flat")
+        style.configure("TLabel", background=background, foreground="#f5f7fa")
+        style.configure("Section.TLabel", background=background, foreground="#9aa0b5", font=("Segoe UI", 9, "bold"))
+        style.configure("Heading.TLabel", background=background, foreground="#f5f7fa", font=("Segoe UI", 12, "bold"))
+        style.configure("TButton", padding=8)
+        style.configure(
+            "Accent.TButton",
+            background=accent,
+            foreground="#ffffff",
+            padding=10,
+            borderwidth=0,
+        )
+        style.map(
+            "Accent.TButton",
+            background=[("active", "#1f6feb"), ("disabled", "#1b1f2b")],
+            foreground=[("disabled", "#9aa0b5")],
+        )
+        style.configure(
+            "Modern.TCombobox",
+            fieldbackground=card_background,
+            background=card_background,
+            foreground="#f5f7fa",
+        )
+        style.map(
+            "Modern.TCombobox",
+            fieldbackground=[("readonly", card_background)],
+            background=[("readonly", card_background)],
+        )
+        style.configure("Horizontal.TScale", background=background, troughcolor=card_background)
+        style.configure(
+            "Modern.TSpinbox",
+            fieldbackground=card_background,
+            background=card_background,
+            foreground="#f5f7fa",
+        )
+        style.map("Modern.TSpinbox", fieldbackground=[("readonly", card_background)])
+
+    def _current_detection_mode(self) -> str:
+        return self._detection_value_by_label.get(
+            self.detection_mode_var.get(),
+            "none",
+        )
+
     def _build_layout(self) -> None:
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
 
-        main = ttk.Frame(self, padding=12)
+        main = ttk.Frame(self, padding=16)
         main.grid(row=0, column=0, sticky="nsew")
         main.columnconfigure(0, weight=0)
         main.columnconfigure(1, weight=1)
         main.rowconfigure(1, weight=1)
 
         top = ttk.Frame(main)
-        top.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
-        top.columnconfigure(1, weight=1)
+        top.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 16))
+        top.columnconfigure(0, weight=1)
 
-        ttk.Label(top, text="Eingabeordner").grid(row=0, column=0, sticky="w")
-        ttk.Entry(top, textvariable=self.input_var).grid(row=0, column=1, sticky="ew", padx=(8, 8))
-        ttk.Button(top, text="Wählen…", command=self._choose_input).grid(row=0, column=2, sticky="ew")
+        input_card = ttk.Frame(top, style="Card.TFrame", padding=16)
+        input_card.grid(row=0, column=0, sticky="ew")
+        input_card.columnconfigure(1, weight=1)
 
-        ttk.Label(top, text="Ausgabeordner").grid(row=1, column=0, sticky="w", pady=(8, 0))
-        ttk.Entry(top, textvariable=self.output_var).grid(row=1, column=1, sticky="ew", padx=(8, 8), pady=(8, 0))
-        ttk.Button(top, text="Wählen…", command=self._choose_output).grid(row=1, column=2, sticky="ew", pady=(8, 0))
+        ttk.Label(input_card, text="Ordner", style="Heading.TLabel").grid(row=0, column=0, columnspan=3, sticky="w")
+        ttk.Label(input_card, text="Eingabeordner", style="Section.TLabel").grid(
+            row=1, column=0, sticky="w", pady=(12, 0)
+        )
+        ttk.Entry(input_card, textvariable=self.input_var).grid(
+            row=1, column=1, sticky="ew", padx=(12, 8), pady=(12, 0)
+        )
+        ttk.Button(input_card, text="Wählen…", command=self._choose_input).grid(
+            row=1, column=2, sticky="ew", pady=(12, 0)
+        )
 
-        options = ttk.Frame(top)
-        options.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(12, 0))
+        ttk.Label(input_card, text="Ausgabeordner", style="Section.TLabel").grid(
+            row=2, column=0, sticky="w", pady=(12, 0)
+        )
+        ttk.Entry(input_card, textvariable=self.output_var).grid(
+            row=2, column=1, sticky="ew", padx=(12, 8), pady=(12, 0)
+        )
+        ttk.Button(input_card, text="Wählen…", command=self._choose_output).grid(
+            row=2, column=2, sticky="ew", pady=(12, 0)
+        )
+
+        options = ttk.Frame(input_card)
+        options.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(16, 0))
         options.columnconfigure(3, weight=1)
 
-        ttk.Checkbutton(options, text="Gesichtserkennung", variable=self.face_detection_var).grid(row=0, column=0, sticky="w")
+        ttk.Label(options, text="Motiv-Erkennung", style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        detection_labels = list(self._detection_value_by_label.keys())
+        ttk.Combobox(
+            options,
+            textvariable=self.detection_mode_var,
+            values=detection_labels,
+            state="readonly",
+            style="Modern.TCombobox",
+            width=18,
+        ).grid(row=0, column=1, sticky="w", padx=(8, 16))
 
-        ttk.Label(options, text="Zielgröße").grid(row=0, column=1, sticky="w", padx=(16, 4))
-        tk.Spinbox(options, from_=256, to=1080, increment=16, textvariable=self.size_var, width=6).grid(row=0, column=2, sticky="w")
+        ttk.Label(options, text="Zielgröße", style="Section.TLabel").grid(row=0, column=2, sticky="w")
+        ttk.Spinbox(
+            options,
+            from_=256,
+            to=1080,
+            increment=16,
+            textvariable=self.size_var,
+            width=7,
+            style="Modern.TSpinbox",
+        ).grid(row=0, column=3, sticky="w")
 
-        list_frame = ttk.Frame(main)
+        list_frame = ttk.Frame(main, style="Card.TFrame", padding=16)
         list_frame.grid(row=1, column=0, sticky="nswe")
+        list_frame.columnconfigure(0, weight=1)
         list_frame.rowconfigure(1, weight=1)
-        ttk.Label(list_frame, text="Bilder").grid(row=0, column=0, sticky="w")
+        ttk.Label(list_frame, text="Bilder", style="Heading.TLabel").grid(row=0, column=0, sticky="w")
 
         self.listbox = tk.Listbox(list_frame, exportselection=False, height=20)
         self.listbox.grid(row=1, column=0, sticky="nswe", pady=(6, 0))
         self.listbox.bind("<<ListboxSelect>>", lambda _event: self._on_listbox_select())
+        self.listbox.configure(
+            background="#0b0f1c",
+            foreground="#f5f7fa",
+            borderwidth=0,
+            highlightthickness=0,
+            selectbackground="#1f6feb",
+            selectforeground="#ffffff",
+            activestyle="none",
+        )
 
         scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.listbox.yview)
         scrollbar.grid(row=1, column=1, sticky="ns")
         self.listbox.configure(yscrollcommand=scrollbar.set)
 
-        preview = ttk.Frame(main)
-        preview.grid(row=1, column=1, sticky="nsew", padx=(12, 0))
+        preview = ttk.Frame(main, style="Card.TFrame", padding=16)
+        preview.grid(row=1, column=1, sticky="nsew", padx=(16, 0))
         preview.columnconfigure(0, weight=1)
 
-        ttk.Label(preview, text="Vorschau").grid(row=0, column=0, sticky="w")
-        self.canvas = tk.Canvas(preview, width=self.CANVAS_SIZE, height=self.CANVAS_SIZE, background="#111111")
-        self.canvas.grid(row=1, column=0, sticky="n", pady=(6, 12))
+        ttk.Label(preview, text="Vorschau", style="Heading.TLabel").grid(row=0, column=0, sticky="w")
+        self.canvas = tk.Canvas(
+            preview,
+            width=self.CANVAS_SIZE,
+            height=self.CANVAS_SIZE,
+            background="#0b0f1c",
+            highlightthickness=0,
+            bd=0,
+        )
+        self.canvas.grid(row=1, column=0, sticky="n", pady=(12, 16))
 
         sliders = ttk.Frame(preview)
         sliders.grid(row=2, column=0, sticky="ew")
@@ -131,16 +259,27 @@ class Application(tk.Tk):
         self.y_scale = ttk.Scale(sliders, from_=0.0, to=1.0, variable=self.offset_y, command=self._on_slider_change)
         self.y_scale.grid(row=2, column=1, sticky="ew", padx=(6, 6), pady=(6, 0))
 
-        ttk.Button(sliders, text="Auto", command=self._reset_crop_to_auto).grid(row=0, column=2, rowspan=3, sticky="ns", padx=(12, 0))
+        ttk.Button(sliders, text="Auto", command=self._reset_crop_to_auto).grid(
+            row=0,
+            column=2,
+            rowspan=3,
+            sticky="ns",
+            padx=(12, 0),
+        )
 
-        ttk.Label(preview, textvariable=self.crop_info_var).grid(row=3, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(preview, textvariable=self.crop_info_var, style="Section.TLabel").grid(
+            row=3,
+            column=0,
+            sticky="w",
+            pady=(12, 0),
+        )
 
         bottom = ttk.Frame(main)
-        bottom.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        bottom.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(16, 0))
         bottom.columnconfigure(0, weight=1)
 
-        ttk.Label(bottom, textvariable=self.progress_var).grid(row=0, column=0, sticky="w")
-        self.convert_button = ttk.Button(bottom, text="Konvertieren", command=self._on_convert)
+        ttk.Label(bottom, textvariable=self.progress_var, style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        self.convert_button = ttk.Button(bottom, text="Konvertieren", command=self._on_convert, style="Accent.TButton")
         self.convert_button.grid(row=0, column=1, sticky="e")
 
         self._set_controls_enabled(False)
@@ -175,10 +314,13 @@ class Application(tk.Tk):
         return Path(raw).expanduser()
 
     def _get_preview_cropper(self) -> Optional[FaceCropper]:
-        if not self.face_detection_var.get():
+        mode = self._current_detection_mode()
+        if mode == "none":
             return None
-        if self._preview_cropper is None:
-            self._preview_cropper = FaceCropper()
+        if self._preview_cropper is None or getattr(self._preview_cropper, "mode", None) != mode:
+            if self._preview_cropper is not None:
+                self._preview_cropper.close()
+            self._preview_cropper = FaceCropper(mode=mode)
         return self._preview_cropper
 
     def destroy(self) -> None:  # pragma: no cover - GUI shutdown
@@ -267,11 +409,13 @@ class Application(tk.Tk):
 
     def _auto_crop_current(self) -> CropBox:
         assert self.current_image is not None and self.input_path is not None
+        detection_mode = self._current_detection_mode()
         options = ProcessingOptions(
             input_path=self.input_path,
             output_dir=self._resolve_output_dir() or self._default_output_for(self.input_path),
             size=self.size_var.get(),
-            face_detection_enabled=self.face_detection_var.get(),
+            face_detection_enabled=detection_mode != "none",
+            detection_mode=detection_mode,
         )
         cropper = self._get_preview_cropper()
         return determine_crop_box(self.current_image, options, cropper)
@@ -343,8 +487,12 @@ class Application(tk.Tk):
         self.manual_crops[self.current_path] = crop
         self._apply_crop_to_controls(crop)
 
-    def _on_face_detection_toggle(self, *_args: object) -> None:
-        if not self.face_detection_var.get() and self._preview_cropper is not None:
+    def _on_detection_change(self, *_args: object) -> None:
+        mode = self._current_detection_mode()
+        if mode == self._last_detection_mode:
+            return
+        self._last_detection_mode = mode
+        if self._preview_cropper is not None:
             self._preview_cropper.close()
             self._preview_cropper = None
         if self.current_path is not None and self.current_image is not None:
@@ -375,11 +523,13 @@ class Application(tk.Tk):
 
     def _run_batch(self, output_dir: Path, manual_overrides: dict[Path, CropBox]) -> None:
         assert self.input_path is not None
+        detection_mode = self._current_detection_mode()
         options = ProcessingOptions(
             input_path=self.input_path,
             output_dir=output_dir,
             size=self.size_var.get(),
-            face_detection_enabled=self.face_detection_var.get(),
+            face_detection_enabled=detection_mode != "none",
+            detection_mode=detection_mode,
         )
         try:
             logger = setup_environment(options)
@@ -394,7 +544,15 @@ class Application(tk.Tk):
             self.after(0, lambda: self._handle_error("Keine unterstützten Dateien gefunden."))
             return
 
-        face_cropper = FaceCropper(min_face=options.min_face, face_priority=options.face_priority) if options.face_detection_enabled else None
+        face_cropper = (
+            FaceCropper(
+                min_face=options.min_face,
+                face_priority=options.face_priority,
+                mode=options.detection_mode,
+            )
+            if options.face_detection_enabled
+            else None
+        )
         manual_map = {self._normalize_path(path): crop for path, crop in manual_overrides.items()}
 
         processed = 0
