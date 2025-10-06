@@ -12,6 +12,7 @@ from src.face_cropper import FaceCropper
 from src.image_pipeline import process_image
 from src.video_pipeline import process_video
 from src.utils import (
+    CropBox,
     ProcessingOptions,
     iter_media_files,
     is_image,
@@ -85,7 +86,12 @@ def build_options(args: argparse.Namespace) -> ProcessingOptions:
     )
 
 
-def _process_images(images: List[Path], options: ProcessingOptions, logger: logging.Logger) -> None:
+def _process_images(
+    images: List[Path],
+    options: ProcessingOptions,
+    logger: logging.Logger,
+    manual_overrides: dict[Path, CropBox] | None = None,
+) -> None:
     if not images:
         return
     thread_local = threading.local()
@@ -105,7 +111,8 @@ def _process_images(images: List[Path], options: ProcessingOptions, logger: logg
 
     def _worker(path: Path) -> Path:
         detector = _get_detector()
-        result = process_image(path, options, detector)
+        override = manual_overrides.get(path) if manual_overrides else None
+        result = process_image(path, options, detector, manual_crop=override)
         return result.target
 
     with ThreadPoolExecutor(max_workers=options.threads or 1) as executor:
@@ -119,7 +126,11 @@ def _process_images(images: List[Path], options: ProcessingOptions, logger: logg
         detector.close()
 
 
-def _process_videos(videos: Iterable[Path], options: ProcessingOptions, logger: logging.Logger) -> None:
+def _process_videos(
+    videos: Iterable[Path],
+    options: ProcessingOptions,
+    logger: logging.Logger,
+) -> None:
     if not videos:
         return
     face_cropper = FaceCropper(min_face=options.min_face, face_priority=options.face_priority) if options.face_detection_enabled else None
@@ -155,4 +166,11 @@ def run_cli(args: argparse.Namespace) -> None:
 
 
 if __name__ == "__main__":
-    run_cli(parse_args())
+    import sys
+
+    if len(sys.argv) == 1:
+        from src.gui import launch_gui
+
+        launch_gui()
+    else:
+        run_cli(parse_args())

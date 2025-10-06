@@ -9,7 +9,8 @@ memoryball-autocrop ist ein CLI- und GUI-Tool zum automatischen Zuschneiden von 
 * Glättung der Bounding-Box via exponentiellem gleitenden Mittel
 * Fallback: sicherer Center-Crop, optional mit Padding
 * Video-Export über ffmpeg inkl. Audio-Kontrolle
-* Multithreading für Bilder, optionaler Tkinter-Quickstart mit Drag&Drop
+* Multithreading für Bilder, komfortable Tkinter-Oberfläche mit Vorschau
+* Manuelle Anpassung des Zuschnitts pro Bild inkl. Vorschau
 
 ## Installation
 
@@ -83,13 +84,18 @@ python main.py --input ./medien --output ./export --pad 0.05 --fps 30 --quality 
 
 ## GUI
 
-Optional kann die Tkinter-GUI gestartet werden:
+Die GUI startet automatisch, sobald `main.py` ohne Parameter geöffnet wird (z. B. per Doppelklick). Alternativ kann sie auch explizit über die Konsole gestartet werden:
 
 ```bash
 python main.py --gui
 ```
 
-Drag & Drop (Ordner), Checkbox für Gesichtserkennung sowie Slider für Größe, CRF und Qualität sind integriert.
+**Workflow:**
+
+1. Eingabeordner wählen – der Ausgabeordner wird automatisch als `Converted <Ordnername>` vorgeschlagen.
+2. Bilder in der Liste auswählen, automatische Erkennung prüfen und bei Bedarf mit Zoom- und Positions-Slidern anpassen.
+3. Videos werden automatisch mitbearbeitet und nutzen die gleichen Einstellungen.
+4. Mit „Konvertieren“ die Ausgabe erstellen; der Fortschritt wird angezeigt.
 
 ## Performance-Tipps
 
