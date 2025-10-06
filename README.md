@@ -107,9 +107,9 @@ python main.py --gui
   ```
 
 * Danach kannst du die App einfach per Doppelklick auf `main.py` oder `start-memoryball.bat` starten.
-  * `start-memoryball.bat` lässt das Terminal bei Fehlern offen und zeigt den gleichen Hinweis wie die GUI an.
-  * Bei fehlenden Bibliotheken erscheint eine verständliche Fehlermeldung mit Lösungsvorschlägen (z. B. für Tkinter oder Pillow).
-* Im Fehlerfall findest du zusätzliche Details in `startup-errors.log` im Projektordner.
+  * `start-memoryball.bat` lässt das Terminal bei Fehlern offen, schreibt alle Fehlermeldungen in `startup-errors.log` und blendet das Protokoll sofort ein.
+  * Bei fehlenden Bibliotheken erscheint eine verständliche Fehlermeldung mit Lösungsvorschlägen (z. B. für Tkinter, Pillow oder OpenCV).
+* Auch beim Doppelklick auf `main.py` wird der Fehler im gleichen Log abgelegt, sodass du ihn jederzeit nachlesen kannst.
 
 ## Performance-Tipps
 
@@ -122,6 +122,7 @@ python main.py --gui
 * **HEIC wird nicht gelesen** – Stelle sicher, dass `pillow-heif` installiert ist und die Datei nicht DRM-geschützt ist.
 * **Beschädigte Metadaten** – ffmpeg/ffprobe können bei fehlerhaften Dateien abbrechen. Die Anwendung loggt Warnungen und verarbeitet den Rest weiter.
 * **Gesicht wird nicht erkannt** – Erhöhe `--min-face` nicht zu stark, nutze `--face-priority center` oder deaktiviere die Erkennung (`--no-face`).
+* **`ModuleNotFoundError: No module named 'cv2'`** – OpenCV ist nicht installiert. Führe `python -m pip install -r requirements.txt` in deinem Projektordner aus.
 
 ## Tests
 

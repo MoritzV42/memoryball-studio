@@ -5,7 +5,12 @@ import contextlib
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Tuple
 
-import cv2
+try:
+    import cv2
+except ModuleNotFoundError as exc:  # pragma: no cover - better error hint for Windows users
+    raise RuntimeError(
+        "OpenCV (cv2) ist nicht installiert. Bitte `pip install -r requirements.txt` ausführen."
+    ) from exc
 import numpy as np
 
 try:  # pragma: no cover - optional dependency check
