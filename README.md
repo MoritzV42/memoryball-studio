@@ -97,6 +97,20 @@ python main.py --gui
 3. Videos werden automatisch mitbearbeitet und nutzen die gleichen Einstellungen.
 4. Mit „Konvertieren“ die Ausgabe erstellen; der Fortschritt wird angezeigt.
 
+### Windows-Start (Doppelklick)
+
+* Stelle sicher, dass Python 3.10+ installiert ist und dass `python` im `%PATH%` liegt.
+* Installiere die Abhängigkeiten einmalig mit:
+
+  ```powershell
+  python -m pip install -r requirements.txt
+  ```
+
+* Danach kannst du die App einfach per Doppelklick auf `main.py` oder `start-memoryball.bat` starten.
+  * `start-memoryball.bat` lässt das Terminal bei Fehlern offen und zeigt den gleichen Hinweis wie die GUI an.
+  * Bei fehlenden Bibliotheken erscheint eine verständliche Fehlermeldung mit Lösungsvorschlägen (z. B. für Tkinter oder Pillow).
+* Im Fehlerfall findest du zusätzliche Details in `startup-errors.log` im Projektordner.
+
 ## Performance-Tipps
 
 * Erhöhe `--threads` für viele Bilder (CPU-Kerne berücksichtigen)
