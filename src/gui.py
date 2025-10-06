@@ -77,8 +77,8 @@ class Application(tk.Tk):
         card_background = "#161a27"
         accent = "#3f8efc"
         self.configure(background=background)
-        self.option_add("*Font", "Segoe UI 10")
-        self.option_add("*Label.font", "Segoe UI 10")
+        self.option_add("*Font", "{Segoe UI} 10")
+        self.option_add("*Label.font", "{Segoe UI} 10")
         self.option_add("*Entry.background", card_background)
         self.option_add("*Entry.foreground", "#f5f7fa")
         self.option_add("*Entry.insertBackground", "#f5f7fa")
