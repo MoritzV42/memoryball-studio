@@ -13,3 +13,131 @@ Traceback (most recent call last):
         "OpenCV (cv2) ist nicht installiert. Bitte `pip install -r requirements.txt` ausführen."
     ) from exc
 RuntimeError: OpenCV (cv2) ist nicht installiert. Bitte `pip install -r requirements.txt` ausführen.
+[2025-10-06 18:27:32]
+Traceback (most recent call last):
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\main.py", line 313, in <module>
+    main()
+    ~~~~^^
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\main.py", line 306, in main
+    _launch_gui_with_feedback()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\main.py", line 281, in _launch_gui_with_feedback
+    launch_gui()
+    ~~~~~~~~~~^^
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\src\gui.py", line 594, in launch_gui
+    app = Application()
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\src\gui.py", line 69, in __init__
+    self._build_layout()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\src\gui.py", line 160, in _build_layout
+    ttk.Label(input_card, text="Ordner", style="Heading.TLabel").grid(row=0, column=0, columnspan=3, sticky="w")
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\tkinter\ttk.py", line 739, in __init__
+    Widget.__init__(self, master, "ttk::label", kw)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\tkinter\ttk.py", line 534, in __init__
+    tkinter.Widget.__init__(self, master, widgetname, kw=kw)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\tkinter\__init__.py", line 2780, in __init__
+    self.tk.call(
+    ~~~~~~~~~~~~^
+        (widgetName, self._w) + extra + self._options(cnf))
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_tkinter.TclError: expected integer but got "UI"
+
+[2025-10-06 18:27:57]
+Traceback (most recent call last):
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\main.py", line 313, in <module>
+    main()
+    ~~~~^^
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\main.py", line 306, in main
+    _launch_gui_with_feedback()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\main.py", line 281, in _launch_gui_with_feedback
+    launch_gui()
+    ~~~~~~~~~~^^
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\src\gui.py", line 594, in launch_gui
+    app = Application()
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\src\gui.py", line 69, in __init__
+    self._build_layout()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\src\gui.py", line 160, in _build_layout
+    ttk.Label(input_card, text="Ordner", style="Heading.TLabel").grid(row=0, column=0, columnspan=3, sticky="w")
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\tkinter\ttk.py", line 739, in __init__
+    Widget.__init__(self, master, "ttk::label", kw)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\tkinter\ttk.py", line 534, in __init__
+    tkinter.Widget.__init__(self, master, widgetname, kw=kw)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\tkinter\__init__.py", line 2780, in __init__
+    self.tk.call(
+    ~~~~~~~~~~~~^
+        (widgetName, self._w) + extra + self._options(cnf))
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_tkinter.TclError: expected integer but got "UI"
+
+[2025-10-06 18:28:09]
+Traceback (most recent call last):
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\main.py", line 313, in <module>
+    main()
+    ~~~~^^
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\main.py", line 306, in main
+    _launch_gui_with_feedback()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\main.py", line 281, in _launch_gui_with_feedback
+    launch_gui()
+    ~~~~~~~~~~^^
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\src\gui.py", line 594, in launch_gui
+    app = Application()
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\src\gui.py", line 69, in __init__
+    self._build_layout()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\src\gui.py", line 160, in _build_layout
+    ttk.Label(input_card, text="Ordner", style="Heading.TLabel").grid(row=0, column=0, columnspan=3, sticky="w")
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\tkinter\ttk.py", line 739, in __init__
+    Widget.__init__(self, master, "ttk::label", kw)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\tkinter\ttk.py", line 534, in __init__
+    tkinter.Widget.__init__(self, master, widgetname, kw=kw)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\tkinter\__init__.py", line 2780, in __init__
+    self.tk.call(
+    ~~~~~~~~~~~~^
+        (widgetName, self._w) + extra + self._options(cnf))
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_tkinter.TclError: expected integer but got "UI"
+
+[2025-10-06 18:28:18]
+Traceback (most recent call last):
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\main.py", line 313, in <module>
+    main()
+    ~~~~^^
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\main.py", line 306, in main
+    _launch_gui_with_feedback()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\main.py", line 281, in _launch_gui_with_feedback
+    launch_gui()
+    ~~~~~~~~~~^^
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\src\gui.py", line 594, in launch_gui
+    app = Application()
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\src\gui.py", line 69, in __init__
+    self._build_layout()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\src\gui.py", line 160, in _build_layout
+    ttk.Label(input_card, text="Ordner", style="Heading.TLabel").grid(row=0, column=0, columnspan=3, sticky="w")
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\tkinter\ttk.py", line 739, in __init__
+    Widget.__init__(self, master, "ttk::label", kw)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\tkinter\ttk.py", line 534, in __init__
+    tkinter.Widget.__init__(self, master, widgetname, kw=kw)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\tkinter\__init__.py", line 2780, in __init__
+    self.tk.call(
+    ~~~~~~~~~~~~^
+        (widgetName, self._w) + extra + self._options(cnf))
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_tkinter.TclError: expected integer but got "UI"
+
