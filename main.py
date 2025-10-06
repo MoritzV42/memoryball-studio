@@ -184,6 +184,20 @@ def _pause_on_windows() -> None:
         pass
 
 
+def _show_native_windows_message(title: str, message: str) -> bool:
+    """Use the Win32 MessageBox API as a last resort."""
+
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(None, message, title, 0x00000010)
+    except Exception:
+        return False
+    return True
+
+
 def _report_startup_error(exc: BaseException) -> None:
     """Write the traceback to a log file and present the error to the user."""
 
@@ -210,7 +224,7 @@ def _report_startup_error(exc: BaseException) -> None:
         root.destroy()
     except Exception:
         # Tkinter may not be available (e.g. pythonw without GUI libraries).
-        pass
+        _show_native_windows_message("MemoryBall Studio", message)
 
     _pause_on_windows()
 
@@ -218,16 +232,48 @@ def _report_startup_error(exc: BaseException) -> None:
 def _launch_gui_with_feedback() -> None:
     """Start the Tkinter GUI and convert missing dependency errors into hints."""
 
+    def _dependency_hint(exc: ModuleNotFoundError) -> RuntimeError:
+        missing = getattr(exc, "name", None) or str(exc) or "ein unbekanntes Paket"
+        if missing.lower() in {"tkinter", "_tkinter", "tk"}:
+            hint = (
+                "Tkinter ist nicht installiert. Installiere Python erneut über python.org "
+                "und aktiviere die Option 'tcl/tk and IDLE', oder verwende 'pip install tk' "
+                "in einer Python-Installation, die Tkinter bereitstellt."
+            )
+        elif missing.lower() in {"pil", "pillow"}:
+            hint = "Installiere Pillow mit 'python -m pip install Pillow'."
+        else:
+            hint = "Installiere alle Abhängigkeiten mit 'python -m pip install -r requirements.txt'."
+        return RuntimeError(
+            "MemoryBall Studio konnte die grafische Oberfläche nicht starten.\n"
+            f"Fehlendes Paket: {missing}\n{hint}"
+        )
+
     try:
         from src.gui import launch_gui
     except ModuleNotFoundError as exc:  # pragma: no cover - depends on user setup
-        missing = getattr(exc, "name", str(exc)) or "eine erforderliche Bibliothek"
-        raise RuntimeError(
-            "Die grafische Oberfläche benötigt zusätzliche Pakete. "
-            f"Bitte installiere die Abhängigkeiten über 'pip install -r requirements.txt'.\n"
-            f"Fehlendes Paket: {missing}"
-        ) from exc
-    launch_gui()
+        raise _dependency_hint(exc) from exc
+
+    try:
+        launch_gui()
+    except ModuleNotFoundError as exc:  # pragma: no cover - depends on user setup
+        raise _dependency_hint(exc) from exc
+    except RuntimeError:
+        raise
+    except Exception as exc:  # pragma: no cover - GUI specific failures
+        try:
+            import tkinter as tk
+
+            if isinstance(exc, tk.TclError):
+                raise RuntimeError(
+                    "Tkinter konnte nicht initialisiert werden. Bitte stelle sicher, dass eine Desktop-Umgebung "
+                    "verfügbar ist und Tk/Tcl installiert wurde (unter Windows im Python-Installer die Option "
+                    "'tcl/tk and IDLE' aktivieren).\n"
+                    f"Originalfehler: {exc}"
+                ) from exc
+        except Exception:
+            pass
+        raise
 
 
 def main() -> None:
