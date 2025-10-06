@@ -1,0 +1,15 @@
+Traceback (most recent call last):
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\src\face_cropper.py", line 9, in <module>
+    import cv2
+ModuleNotFoundError: No module named 'cv2'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\main.py", line 15, in <module>
+    from src.face_cropper import FaceCropper
+  File "C:\Users\morit\OneDrive\Dokumente\GitHub\memoryball-studio\src\face_cropper.py", line 11, in <module>
+    raise RuntimeError(
+        "OpenCV (cv2) ist nicht installiert. Bitte `pip install -r requirements.txt` ausführen."
+    ) from exc
+RuntimeError: OpenCV (cv2) ist nicht installiert. Bitte `pip install -r requirements.txt` ausführen.
