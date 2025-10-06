@@ -1,5 +1,5 @@
 opencv-python
-mediapipe==0.10.21
+mediapipe==0.10.21; platform_system != "Windows" or python_version < "3.12"
 numpy
 pillow
 pillow-heif

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import contextlib
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Tuple
+from typing import List, Optional
 
 try:
     import cv2
@@ -13,6 +13,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - better error hint for W
     ) from exc
 import numpy as np
 
+_IMPORT_ERROR: Optional[Exception] = None
 try:  # pragma: no cover - optional dependency check
     import mediapipe as mp
 except ImportError as exc:  # pragma: no cover
@@ -49,16 +50,32 @@ class ExponentialSmoother:
 
 class FaceCropper:
     def __init__(self, min_face: float = 0.1, face_priority: str = "largest", smoothing: float = 0.6) -> None:
-        if mp is None:
-            raise RuntimeError("mediapipe ist nicht installiert. Bitte `pip install mediapipe` ausführen") from _IMPORT_ERROR
-        self._face_detection = mp.solutions.face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.4)
+        self._use_mediapipe = mp is not None
+        self._cascade: Optional[cv2.CascadeClassifier] = None
+        if self._use_mediapipe:
+            self._face_detection = mp.solutions.face_detection.FaceDetection(
+                model_selection=1, min_detection_confidence=0.4
+            )
+        else:
+            cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            self._cascade = cv2.CascadeClassifier(cascade_path)
+            if self._cascade.empty():  # pragma: no cover - depends on local OpenCV data files
+                message = (
+                    "mediapipe ist nicht installiert und das OpenCV-Haar-Cascade-Modell fehlt."
+                    " Bitte installiere entweder mediapipe oder stelle sicher, dass OpenCV korrekt"
+                    " installiert ist."
+                )
+                if mp is None:
+                    raise RuntimeError(message) from _IMPORT_ERROR
+                raise RuntimeError(message)
         self.min_face = min_face
         self.face_priority = face_priority
         self.smoother = ExponentialSmoother(alpha=smoothing)
 
     def close(self) -> None:
-        with contextlib.suppress(Exception):
-            self._face_detection.close()
+        if self._use_mediapipe:
+            with contextlib.suppress(Exception):
+                self._face_detection.close()
 
     def _mp_box_to_crop(self, detection: "mp.framework.formats.detection_pb2.Detection", width: int, height: int) -> CropBox:
         location = detection.location_data
@@ -75,15 +92,27 @@ class FaceCropper:
         return CropBox(x=x, y=y, size=size)
 
     def detect_faces(self, image: np.ndarray) -> List[FaceDetectionResult]:
-        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        results = self._face_detection.process(rgb)
         detections: List[FaceDetectionResult] = []
-        if results.detections:
-            h, w = image.shape[:2]
-            for detection in results.detections:
-                score = detection.score[0] if detection.score else 0.0
-                box = self._mp_box_to_crop(detection, w, h)
-                detections.append(FaceDetectionResult(score=score, box=box))
+        h, w = image.shape[:2]
+        if self._use_mediapipe:
+            rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            results = self._face_detection.process(rgb)
+            if results.detections:
+                for detection in results.detections:
+                    score = detection.score[0] if detection.score else 0.0
+                    box = self._mp_box_to_crop(detection, w, h)
+                    detections.append(FaceDetectionResult(score=score, box=box))
+            return detections
+
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        gray = cv2.equalizeHist(gray)
+        faces = self._cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, flags=cv2.CASCADE_SCALE_IMAGE)
+        for (x, y, width, height) in faces:
+            size = max(width, height)
+            size = max(size, self.min_face * min(w, h))
+            x_adj = clamp(x + width / 2 - size / 2, 0, max(0, w - size))
+            y_adj = clamp(y + height / 2 - size / 2, 0, max(0, h - size))
+            detections.append(FaceDetectionResult(score=1.0, box=CropBox(x=x_adj, y=y_adj, size=size)))
         return detections
 
     def select_face(self, detections: List[FaceDetectionResult], width: int, height: int) -> Optional[CropBox]:
