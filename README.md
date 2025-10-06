@@ -5,7 +5,7 @@ memoryball-autocrop ist ein CLI- und GUI-Tool zum automatischen Zuschneiden von 
 ## Features
 
 * Stapelverarbeitung für Bilder (JPG/PNG/HEIC/WebP) und Videos (MP4/MOV/MKV/AVI)
-* Automatische Gesichtserkennung mit MediaPipe Face Detection
+* Automatische Gesichtserkennung mit MediaPipe Face Detection (Fallback über OpenCV-Haar-Cascades, falls MediaPipe nicht verfügbar ist)
 * Glättung der Bounding-Box via exponentiellem gleitenden Mittel
 * Fallback: sicherer Center-Crop, optional mit Padding
 * Video-Export über ffmpeg inkl. Audio-Kontrolle
@@ -123,6 +123,7 @@ python main.py --gui
 * **Beschädigte Metadaten** – ffmpeg/ffprobe können bei fehlerhaften Dateien abbrechen. Die Anwendung loggt Warnungen und verarbeitet den Rest weiter.
 * **Gesicht wird nicht erkannt** – Erhöhe `--min-face` nicht zu stark, nutze `--face-priority center` oder deaktiviere die Erkennung (`--no-face`).
 * **`ModuleNotFoundError: No module named 'cv2'`** – OpenCV ist nicht installiert. Führe `python -m pip install -r requirements.txt` in deinem Projektordner aus.
+* **`pip install mediapipe` schlägt auf Windows/Python 3.12 fehl** – Die Installation der Requirements funktioniert trotzdem. In diesem Fall nutzt die App automatisch die OpenCV-Haar-Cascade-Erkennung.
 
 ## Tests
 
