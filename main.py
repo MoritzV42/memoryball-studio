@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
 import logging
+import os
+import sys
 import threading
+import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Iterable, List
@@ -165,12 +169,79 @@ def run_cli(args: argparse.Namespace) -> None:
     logger.info("Fertig.")
 
 
-if __name__ == "__main__":
-    import sys
+ERROR_LOG_PATH = Path(__file__).with_name("startup-errors.log")
+
+
+def _pause_on_windows() -> None:
+    """Prevent the console window from closing immediately on Windows."""
+
+    if os.name != "nt" or "PYTEST_CURRENT_TEST" in os.environ:
+        return
+    try:
+        input("\nDrücke Enter, um das Fenster zu schließen …")
+    except EOFError:
+        # Nothing we can do – on pythonw.exe there is no console to pause.
+        pass
+
+
+def _report_startup_error(exc: BaseException) -> None:
+    """Write the traceback to a log file and present the error to the user."""
+
+    ERROR_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    trace = "".join(traceback.format_exception(exc))
+    with ERROR_LOG_PATH.open("a", encoding="utf-8") as fh:
+        fh.write(f"[{timestamp}]\n{trace}\n")
+    message = (
+        "MemoryBall Studio konnte nicht gestartet werden.\n"
+        f"Fehler: {exc}\n\n"
+        f"Details wurden nach {ERROR_LOG_PATH.resolve()} geschrieben."
+    )
+    print(message, file=sys.stderr)
+    print(trace, file=sys.stderr)
+
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror("MemoryBall Studio", message)
+        root.destroy()
+    except Exception:
+        # Tkinter may not be available (e.g. pythonw without GUI libraries).
+        pass
+
+    _pause_on_windows()
+
+
+def _launch_gui_with_feedback() -> None:
+    """Start the Tkinter GUI and convert missing dependency errors into hints."""
+
+    try:
+        from src.gui import launch_gui
+    except ModuleNotFoundError as exc:  # pragma: no cover - depends on user setup
+        missing = getattr(exc, "name", str(exc)) or "eine erforderliche Bibliothek"
+        raise RuntimeError(
+            "Die grafische Oberfläche benötigt zusätzliche Pakete. "
+            f"Bitte installiere die Abhängigkeiten über 'pip install -r requirements.txt'.\n"
+            f"Fehlendes Paket: {missing}"
+        ) from exc
+    launch_gui()
+
+
+def main() -> None:
+    """Entry point that routes between GUI and CLI modes."""
 
     if len(sys.argv) == 1:
-        from src.gui import launch_gui
+        _launch_gui_with_feedback()
+        return
+    run_cli(parse_args())
 
-        launch_gui()
-    else:
-        run_cli(parse_args())
+
+if __name__ == "__main__":
+    try:
+        main()
+    except BaseException as exc:  # pragma: no cover - defensive for user experience
+        _report_startup_error(exc)
+        raise SystemExit(1)
