@@ -29,8 +29,44 @@ def test_process_image(tmp_path: Path) -> None:
     options = _base_options(tmp_path)
     result = process_image(src, options, None)
     assert result.target.exists()
-    img = Image.open(result.target)
-    assert img.size == (options.size, options.size)
+    assert result.target.suffix == ".mp4"
+
+    probe = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=p=0",
+            str(result.target),
+        ],
+        stdout=subprocess.PIPE,
+        check=True,
+    )
+    width_out, height_out = map(int, probe.stdout.decode("utf-8").strip().split(","))
+    assert width_out == options.size
+    assert height_out == options.size
+
+    duration_probe = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(result.target),
+        ],
+        stdout=subprocess.PIPE,
+        check=True,
+    )
+    duration = float(duration_probe.stdout.decode("utf-8").strip())
+    assert 4.8 <= duration <= 5.2
 
 
 def test_process_video(tmp_path: Path) -> None:
