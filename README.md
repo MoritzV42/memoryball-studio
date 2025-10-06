@@ -55,6 +55,7 @@ Wichtige Parameter:
 | `--preset` | ffmpeg-Preset (Standard `medium`) |
 | `--min-face` | Minimale Gesichtsfläche relativ zu kleinster Bildkante |
 | `--face-priority` | Auswahl bei mehreren Gesichtern (`largest`/`center`/`all`) |
+| `--detection` | Erkennungsmodus (`face`/`person`/`none`) |
 | `--threads` | Threads für Bilder |
 | `--pad` | Optionales Padding (z. B. `0.05` für 5 %) |
 | `--image-format` | `jpg`, `png` oder `webp` |

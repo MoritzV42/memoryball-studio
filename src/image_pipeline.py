@@ -46,21 +46,19 @@ def determine_crop_box(
     face_cropper: Optional[FaceCropper],
 ) -> CropBox:
     width, height = img.size
+    base_crop = _center_square(width, height, options.pad)
     if options.mode == "center":
-        crop_box = _center_square(width, height, options.pad)
+        crop_box = base_crop
     elif options.mode == "manual" and None not in (options.crop_x, options.crop_y, options.crop_w, options.crop_h):
         crop_box = CropBox(float(options.crop_x), float(options.crop_y), float(min(options.crop_w, options.crop_h)))
     elif options.face_detection_enabled and face_cropper is not None:
         array = np.array(img.convert("RGB"))
         array_bgr = array[:, :, ::-1]
-        detections = face_cropper.detect_faces(array_bgr)
-        box = face_cropper.select_face(detections, width, height)
-        if box is None:
-            crop_box = _center_square(width, height, options.pad)
-        else:
-            crop_box = box
+        detections = face_cropper.detect_subjects(array_bgr)
+        focus = face_cropper.focus_window(detections, width, height, base_crop.size)
+        crop_box = focus or base_crop
     else:
-        crop_box = _center_square(width, height, options.pad)
+        crop_box = base_crop
     return _normalize_crop(width, height, crop_box)
 
 
