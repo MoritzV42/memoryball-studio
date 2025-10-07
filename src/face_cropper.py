@@ -220,8 +220,9 @@ class FaceCropper:
         max_y = max(det.box.y + det.box.size for det in relevant)
         cover_width = max_x - min_x
         cover_height = max_y - min_y
+        min_face_size = self.min_face * min(width, height)
         largest_size = max(det.box.size for det in relevant)
-        min_size = max(self.min_face * min(width, height), largest_size)
+        min_size = max(min_face_size, largest_size)
         max_size = max_crop_size(width, height)
         size = max(cover_width, cover_height, largest_size)
         size = clamp(size * 1.05, min_size, max_size)
@@ -326,6 +327,103 @@ class FaceCropper:
                 best_score = score
                 best_pos = pos
         return clamp(best_pos, 0.0, limit)
+
+    def _position_with_constraints(
+        self,
+        preferred: float,
+        min_edge: float,
+        max_edge: float,
+        size: float,
+        total: int,
+    ) -> float:
+        limit = max(0.0, total - size)
+        coverage_min = max(max_edge - size, 0.0)
+        coverage_max = min(min_edge, limit)
+        if coverage_min > coverage_max:
+            return clamp(preferred, 0.0, limit)
+        return clamp(preferred, coverage_min, coverage_max)
+
+    def _crop_from_bounds(
+        self,
+        min_x: float,
+        max_x: float,
+        min_y: float,
+        max_y: float,
+        size: float,
+        width: int,
+        height: int,
+        top_ratio: float,
+    ) -> CropBox:
+        preferred_x = (min_x + max_x) / 2 - size / 2
+        preferred_y = min_y - size * top_ratio
+        x = self._position_with_constraints(preferred_x, min_x, max_x, size, width)
+        y = self._position_with_constraints(preferred_y, min_y, max_y, size, height)
+        return CropBox(x=x, y=y, size=size)
+
+    def plan_motion(
+        self,
+        detections: List[DetectionResult],
+        width: int,
+        height: int,
+        *,
+        body_scale: float = 1.7,
+        face_margin: float = 0.12,
+        body_top_ratio: float = 0.2,
+        face_top_ratio: float = 0.08,
+    ) -> Optional[tuple[CropBox, CropBox]]:
+        relevant = self._filter_relevant_detections(detections)
+        if not relevant:
+            return None
+        relevant = sorted(relevant, key=lambda det: det.box.size, reverse=True)
+
+        min_x = min(det.box.x for det in relevant)
+        max_x = max(det.box.x + det.box.size for det in relevant)
+        min_y = min(det.box.y for det in relevant)
+        max_y = max(det.box.y + det.box.size for det in relevant)
+
+        min_face_size = self.min_face * min(width, height)
+        largest_size = max(det.box.size for det in relevant)
+        min_size = max(min_face_size, largest_size)
+        max_size = max_crop_size(width, height)
+
+        span_width = max_x - min_x
+        span_height = max_y - min_y
+        base_span = max(span_width, span_height, largest_size)
+        face_size = clamp(base_span * (1.0 + face_margin), min_size, max_size)
+        body_size = clamp(face_size * body_scale, min_size, max_size)
+
+        fits_all = span_width <= max_size and span_height <= max_size
+
+        if not fits_all and len(relevant) >= 2:
+            primary = relevant[0].box
+            secondary = relevant[1].box
+            primary_min = max(min_face_size, primary.size)
+            secondary_min = max(min_face_size, secondary.size)
+            start = self._crop_from_bounds(
+                primary.x,
+                primary.x + primary.size,
+                primary.y,
+                primary.y + primary.size,
+                clamp(primary.size * body_scale, primary_min, max_size),
+                width,
+                height,
+                body_top_ratio,
+            )
+            end = self._crop_from_bounds(
+                secondary.x,
+                secondary.x + secondary.size,
+                secondary.y,
+                secondary.y + secondary.size,
+                clamp(secondary.size * (1.0 + face_margin), secondary_min, max_size),
+                width,
+                height,
+                face_top_ratio,
+            )
+            return start, end
+
+        start = self._crop_from_bounds(min_x, max_x, min_y, max_y, body_size, width, height, body_top_ratio)
+        end = self._crop_from_bounds(min_x, max_x, min_y, max_y, face_size, width, height, face_top_ratio)
+        return start, end
 
     def focus_window(
         self,

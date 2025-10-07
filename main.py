@@ -56,6 +56,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--format", help="Optionales Format-Preset, z.B. jpg,mp4")
     parser.add_argument("--no-face", action="store_true", help="Gesichtserkennung deaktivieren")
     parser.add_argument("--gui", action="store_true", help="Tkinter-GUI starten")
+    parser.add_argument(
+        "--motion-direction",
+        choices=["in", "out"],
+        default="in",
+        help="Standardrichtung für automatische Bewegungen (rein- oder rauszoomen)",
+    )
     return parser.parse_args()
 
 
@@ -98,6 +104,7 @@ def build_options(args: argparse.Namespace) -> ProcessingOptions:
         log_level=args.log_level,
         face_detection_enabled=detection_mode != "none",
         detection_mode=detection_mode,
+        motion_direction=args.motion_direction,
     )
 
 
