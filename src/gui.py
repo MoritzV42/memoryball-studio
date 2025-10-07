@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -58,6 +59,13 @@ class Application(tk.Tk):
         self._preview_cropper: Optional[FaceCropper] = None
         self._updating_controls = False
         self.output_media_files: list[Path] = []
+        self._legend_items: dict[str, dict[str, object]] = {}
+        self._legend_colors = {"start": "#ff5555", "end": "#00ff88"}
+        self._tutorial_window: Optional[tk.Toplevel] = None
+        self._tutorial_steps: list[dict[str, object]] = []
+        self._tutorial_index = -1
+        self._tutorial_running = False
+        self._tutorial_completed = self._load_tutorial_completed()
 
         self.input_var = tk.StringVar()
         self.output_var = tk.StringVar()
@@ -83,6 +91,7 @@ class Application(tk.Tk):
         self._conversion_active = False
 
         self._build_layout()
+        self.after(1000, self._maybe_start_tutorial)
         self.detection_mode_var.trace_add("write", self._on_detection_change)
         self.active_crop_var.trace_add("write", self._on_active_crop_change)
 
@@ -93,6 +102,9 @@ class Application(tk.Tk):
         background = "#0f111a"
         card_background = "#161a27"
         accent = "#3f8efc"
+        self._background_color = background
+        self._card_background = card_background
+        self._accent_color = accent
         self.configure(background=background)
         self.option_add("*Font", "{Segoe UI} 10")
         self.option_add("*Label.font", "{Segoe UI} 10")
@@ -117,6 +129,8 @@ class Application(tk.Tk):
         style.configure("TLabel", background=background, foreground="#f5f7fa")
         style.configure("Section.TLabel", background=background, foreground="#9aa0b5", font=("Segoe UI", 9, "bold"))
         style.configure("Heading.TLabel", background=background, foreground="#f5f7fa", font=("Segoe UI", 12, "bold"))
+        style.configure("Tutorial.TLabel", background=card_background, foreground="#f5f7fa")
+        style.configure("TutorialHeading.TLabel", background=card_background, foreground="#f5f7fa", font=("Segoe UI", 12, "bold"))
         style.configure("TButton", padding=8)
         style.configure(
             "Accent.TButton",
@@ -170,16 +184,26 @@ class Application(tk.Tk):
         top = ttk.Frame(main)
         top.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 16))
         top.columnconfigure(0, weight=1)
+        top.columnconfigure(1, weight=0)
 
         input_card = ttk.Frame(top, style="Card.TFrame", padding=16)
         input_card.grid(row=0, column=0, sticky="ew")
         input_card.columnconfigure(1, weight=1)
 
+        self.tutorial_button = ttk.Button(
+            top,
+            text="❔ Tutorial",
+            command=self._start_tutorial,
+            style="Accent.TButton",
+        )
+        self.tutorial_button.grid(row=0, column=1, sticky="ne", padx=(12, 0))
+
         ttk.Label(input_card, text="Ordner", style="Heading.TLabel").grid(row=0, column=0, columnspan=3, sticky="w")
         ttk.Label(input_card, text="Eingabeordner", style="Section.TLabel").grid(
             row=1, column=0, sticky="w", pady=(12, 0)
         )
-        ttk.Entry(input_card, textvariable=self.input_var).grid(
+        self.input_entry = ttk.Entry(input_card, textvariable=self.input_var)
+        self.input_entry.grid(
             row=1, column=1, sticky="ew", padx=(12, 8), pady=(12, 0)
         )
         ttk.Button(input_card, text="Wählen…", command=self._choose_input).grid(
@@ -189,7 +213,8 @@ class Application(tk.Tk):
         ttk.Label(input_card, text="Ausgabeordner", style="Section.TLabel").grid(
             row=2, column=0, sticky="w", pady=(12, 0)
         )
-        ttk.Entry(input_card, textvariable=self.output_var).grid(
+        self.output_entry = ttk.Entry(input_card, textvariable=self.output_var)
+        self.output_entry.grid(
             row=2, column=1, sticky="ew", padx=(12, 8), pady=(12, 0)
         )
         ttk.Button(input_card, text="Wählen…", command=self._choose_output).grid(
@@ -263,8 +288,13 @@ class Application(tk.Tk):
         self.canvas.bind("<B1-Motion>", self._on_canvas_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
 
+        legend = ttk.Frame(preview, style="Card.TFrame")
+        legend.grid(row=2, column=0, sticky="w", pady=(0, 12))
+        self.legend_frame = legend
+        self._build_legend(legend)
+
         nav = ttk.Frame(preview)
-        nav.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+        nav.grid(row=3, column=0, sticky="ew", pady=(0, 12))
         nav.columnconfigure(1, weight=1)
         self.prev_button = ttk.Button(nav, text="◀", width=4, command=self._show_previous_image)
         self.prev_button.grid(row=0, column=0, sticky="w")
@@ -273,7 +303,7 @@ class Application(tk.Tk):
         self.next_button.grid(row=0, column=2, sticky="e")
 
         motion_controls = ttk.Frame(preview)
-        motion_controls.grid(row=3, column=0, sticky="ew", pady=(0, 8))
+        motion_controls.grid(row=4, column=0, sticky="ew", pady=(0, 8))
         motion_controls.columnconfigure(1, weight=1)
         ttk.Checkbutton(
             motion_controls,
@@ -299,7 +329,7 @@ class Application(tk.Tk):
         self.end_radio.grid(row=0, column=1)
 
         sliders = ttk.Frame(preview)
-        sliders.grid(row=4, column=0, sticky="ew")
+        sliders.grid(row=5, column=0, sticky="ew")
         sliders.columnconfigure(1, weight=1)
         sliders.columnconfigure(3, weight=1)
 
@@ -324,7 +354,7 @@ class Application(tk.Tk):
         )
 
         ttk.Label(preview, textvariable=self.crop_info_var, style="Section.TLabel").grid(
-            row=5,
+            row=6,
             column=0,
             sticky="w",
             pady=(12, 0),
@@ -376,10 +406,252 @@ class Application(tk.Tk):
 
         self._set_controls_enabled(False)
         self._refresh_output_list()
+        self._refresh_legend_state()
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+    def _build_legend(self, parent: tk.Widget) -> None:
+        for child in parent.winfo_children():
+            child.destroy()
+        self._legend_items.clear()
+        entries = [
+            ("start", "1", "= Startposition"),
+            ("end", "2", "= Endposition"),
+        ]
+        for index, (key, number, description) in enumerate(entries):
+            padx = (0, 6) if index == 0 else (24, 6)
+            number_label = tk.Label(
+                parent,
+                text=number,
+                fg=self._legend_colors.get(key, "#ffffff"),
+                bg=self._card_background,
+                font=("Segoe UI", 12, "bold"),
+                borderwidth=1,
+                relief="solid",
+                padx=8,
+                pady=2,
+                cursor="hand2",
+            )
+            number_label.grid(row=0, column=index * 2, padx=padx)
+            number_label.bind("<Button-1>", lambda _e, target=key: self._select_crop(target))
+            description_label = ttk.Label(parent, text=description, cursor="hand2")
+            description_label.grid(row=0, column=index * 2 + 1, sticky="w")
+            description_label.bind("<Button-1>", lambda _e, target=key: self._select_crop(target))
+            self._legend_items[key] = {
+                "number": number_label,
+                "text": description_label,
+            }
+        self._refresh_legend_state()
+
+    def _refresh_legend_state(self) -> None:
+        if not self._legend_items:
+            return
+        for key, widgets in self._legend_items.items():
+            number_label: tk.Label = widgets["number"]  # type: ignore[assignment]
+            text_label: ttk.Label = widgets["text"]  # type: ignore[assignment]
+            color = self._legend_colors.get(key, "#ffffff")
+            enabled = key == "end" or self.motion_enabled_var.get()
+            is_active = enabled and self.active_crop_var.get() == key
+            if enabled:
+                number_label.configure(cursor="hand2")
+                text_label.configure(cursor="hand2")
+                if is_active:
+                    number_label.configure(bg=color, fg=self._background_color, relief="raised")
+                else:
+                    number_label.configure(bg=self._card_background, fg=color, relief="solid")
+                text_label.configure(foreground="#f5f7fa")
+            else:
+                number_label.configure(bg=self._card_background, fg="#4c5267", relief="solid", cursor="")
+                text_label.configure(foreground="#5a6176", cursor="")
+
+    def _select_crop(self, target: str) -> None:
+        if target == "start" and not self.motion_enabled_var.get():
+            return
+        if self.active_crop_var.get() != target:
+            self.active_crop_var.set(target)
+        else:
+            self._on_active_crop_change()
+            self._refresh_legend_state()
+
+    def _tutorial_state_path(self, ensure: bool = False) -> Path:
+        base = Path.home() / ".memoryball-studio"
+        if ensure:
+            ensure_dir(base)
+        return base / "ui_state.json"
+
+    def _load_tutorial_completed(self) -> bool:
+        path = self._tutorial_state_path()
+        if not path.exists():
+            return False
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        return bool(data.get("tutorial_completed"))
+
+    def _save_tutorial_completed(self) -> None:
+        path = self._tutorial_state_path(ensure=True)
+        try:
+            path.write_text(json.dumps({"tutorial_completed": True}, indent=2), encoding="utf-8")
+        except OSError:
+            pass
+
+    def _maybe_start_tutorial(self) -> None:
+        if not self._tutorial_completed:
+            self._start_tutorial()
+
+    def _start_tutorial(self) -> None:
+        if self._tutorial_running:
+            return
+        self.update_idletasks()
+        steps = self._build_tutorial_steps()
+        if not steps:
+            return
+        self._tutorial_steps = steps
+        self._tutorial_index = 0
+        self._tutorial_running = True
+        self._show_tutorial_step(0)
+
+    def _build_tutorial_steps(self) -> list[dict[str, object]]:
+        steps = [
+            {
+                "widget": self.input_entry,
+                "title": "Eingabe auswählen",
+                "message": "👉 Wähle hier den Ordner mit deinen Bildern oder Videos aus.",
+                "placement": "right",
+            },
+            {
+                "widget": self.listbox,
+                "title": "Dateien überblicken",
+                "message": "👉 In dieser Liste erscheinen alle Medien aus dem Ordner. Ein Klick lädt die Vorschau.",
+                "placement": "right",
+            },
+            {
+                "widget": self.canvas,
+                "title": "Ausschnitt anpassen",
+                "message": "👉 Ziehe die farbigen Rahmen oder benutze die Regler, um den Bildausschnitt festzulegen.",
+                "placement": "left",
+            },
+            {
+                "widget": self.legend_frame,
+                "title": "Legende nutzen",
+                "message": "👉 Die rote 1 markiert den Start, die grüne 2 das Ende. Ein Klick auf die Zahl wählt das Feld auch bei Überlappung aus.",
+                "placement": "below",
+            },
+            {
+                "widget": self.convert_button,
+                "title": "Konvertierung starten",
+                "message": "👉 Wenn alles passt, starte hier die Verarbeitung deiner Medien.",
+                "placement": "above",
+            },
+        ]
+        return steps
+
+    def _show_tutorial_step(self, index: int) -> None:
+        if index < 0 or index >= len(self._tutorial_steps):
+            self._finish_tutorial()
+            return
+        self._destroy_tutorial_window()
+        step = self._tutorial_steps[index]
+        widget = step["widget"]
+        if not isinstance(widget, tk.Misc):
+            self._finish_tutorial()
+            return
+        widget.update_idletasks()
+        self.update_idletasks()
+        x = widget.winfo_rootx()
+        y = widget.winfo_rooty()
+        width = max(widget.winfo_width(), 1)
+        height = max(widget.winfo_height(), 1)
+        placement = step.get("placement", "right")
+        offset = 24
+        pos_x: float
+        pos_y: float
+        if placement == "left":
+            pos_x = max(self.winfo_rootx() + 20, x - 320)
+            pos_y = y
+        elif placement == "below":
+            pos_x = x
+            pos_y = y + height + offset
+        elif placement == "above":
+            pos_x = x
+            pos_y = max(self.winfo_rooty() + 20, y - 200)
+        else:  # right
+            pos_x = x + width + offset
+            pos_y = y
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        pos_x = max(0.0, min(pos_x, screen_w - 320))
+        pos_y = max(0.0, min(pos_y, screen_h - 200))
+        window = tk.Toplevel(self)
+        window.transient(self)
+        window.attributes("-topmost", True)
+        window.configure(background=self._card_background)
+        window.title("Tutorial")
+        window.geometry(f"+{int(pos_x)}+{int(pos_y)}")
+        window.resizable(False, False)
+        window.protocol("WM_DELETE_WINDOW", lambda: self._stop_tutorial(record_completion=False))
+        frame = ttk.Frame(window, style="Card.TFrame", padding=16)
+        frame.grid(row=0, column=0, sticky="nsew")
+        frame.columnconfigure(0, weight=1)
+        arrow = {"right": "⬅️", "left": "➡️", "below": "⬆️", "above": "⬇️"}.get(placement, "⬅️")
+        ttk.Label(frame, text=f"{arrow} {step['title']}", style="TutorialHeading.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(frame, text=step["message"], wraplength=280, justify="left", style="Tutorial.TLabel").grid(
+            row=1, column=0, sticky="w", pady=(8, 12)
+        )
+        controls = ttk.Frame(frame, style="Card.TFrame")
+        controls.grid(row=2, column=0, sticky="ew")
+        controls.columnconfigure(0, weight=1)
+        ttk.Button(
+            controls,
+            text="Später",
+            command=lambda: self._stop_tutorial(record_completion=False),
+        ).grid(row=0, column=0, sticky="w")
+        next_text = "Fertig" if index == len(self._tutorial_steps) - 1 else "Weiter"
+        ttk.Button(
+            controls,
+            text=next_text,
+            style="Accent.TButton",
+            command=self._advance_tutorial,
+        ).grid(row=0, column=1, sticky="e")
+        try:
+            window.grab_set()
+        except tk.TclError:
+            pass
+        self._tutorial_window = window
+
+    def _advance_tutorial(self) -> None:
+        if not self._tutorial_running:
+            return
+        self._tutorial_index += 1
+        if self._tutorial_index >= len(self._tutorial_steps):
+            self._finish_tutorial()
+        else:
+            self._show_tutorial_step(self._tutorial_index)
+
+    def _finish_tutorial(self) -> None:
+        self._stop_tutorial(record_completion=True)
+
+    def _stop_tutorial(self, record_completion: bool) -> None:
+        self._destroy_tutorial_window()
+        self._tutorial_running = False
+        self._tutorial_steps = []
+        self._tutorial_index = -1
+        if record_completion:
+            if not self._tutorial_completed:
+                self._tutorial_completed = True
+                self._save_tutorial_completed()
+
+    def _destroy_tutorial_window(self) -> None:
+        if self._tutorial_window is not None:
+            try:
+                self._tutorial_window.grab_release()
+            except tk.TclError:
+                pass
+            self._tutorial_window.destroy()
+            self._tutorial_window = None
+
     def _normalize_path(self, path: Path) -> Path:
         try:
             return path.resolve()
@@ -405,6 +677,7 @@ class Application(tk.Tk):
             self.start_radio.state(["disabled"])
             self.end_radio.state(["disabled"])
             self.convert_selected_button.state(["disabled"])
+        self._refresh_legend_state()
         self.listbox.configure(state="normal")
 
     def _refresh_selected_button_state(self) -> None:
@@ -438,6 +711,7 @@ class Application(tk.Tk):
         return self._preview_cropper
 
     def destroy(self) -> None:  # pragma: no cover - GUI shutdown
+        self._destroy_tutorial_window()
         if self._preview_cropper is not None:
             self._preview_cropper.close()
             self._preview_cropper = None
@@ -684,6 +958,7 @@ class Application(tk.Tk):
                 self.manual_crops[self.current_path] = manual
         self._apply_manual_to_controls(manual)
         self._refresh_selected_button_state()
+        self._refresh_legend_state()
 
     def _on_active_crop_change(self, *_args: object) -> None:
         if not self.motion_enabled_var.get():
@@ -691,10 +966,12 @@ class Application(tk.Tk):
                 self.active_crop_var.set("end")
             return
         if self.current_path is None or self.current_path not in self.manual_crops:
+            self._refresh_legend_state()
             return
         manual = self.manual_crops[self.current_path]
         self._sync_sliders_with_active(manual)
         self._render_preview(manual)
+        self._refresh_legend_state()
 
     def _on_slider_change(self, _value: float | str) -> None:
         if self._updating_controls or self.current_image is None or self.current_path is None:
@@ -773,6 +1050,7 @@ class Application(tk.Tk):
         self._tk_image = ImageTk.PhotoImage(resized)
 
         self.canvas.delete("all")
+        self.canvas.config(cursor="")
         offset_x = (self.CANVAS_SIZE - display_width) / 2
         offset_y = (self.CANVAS_SIZE - display_height) / 2
         self.canvas.create_image(self.CANVAS_SIZE / 2, self.CANVAS_SIZE / 2, image=self._tk_image)
@@ -783,6 +1061,20 @@ class Application(tk.Tk):
 
         active_target = "start" if self.motion_enabled_var.get() and self.active_crop_var.get() == "start" else "end"
 
+        def draw_label(rect: tuple[float, float, float, float], target: str, text: str) -> None:
+            cx = (rect[0] + rect[2]) / 2
+            cy = (rect[1] + rect[3]) / 2
+            tag = f"label_{target}"
+            self.canvas.create_text(
+                cx,
+                cy,
+                text=text,
+                fill=self._legend_colors.get(target, "#ffffff"),
+                font=("Segoe UI", 16, "bold"),
+                tags=("crop_label", tag),
+            )
+            self.canvas.tag_bind(tag, "<Button-1>", lambda _e, t=target: self._select_crop(t))
+
         if self.motion_enabled_var.get():
             start_rect = self._canvas_rect(manual.start)
             end_rect = self._canvas_rect(manual.end)
@@ -790,6 +1082,8 @@ class Application(tk.Tk):
             self._manual_display["end"] = end_rect
             self.canvas.create_rectangle(*start_rect, outline="#ff5555", width=2)
             self.canvas.create_rectangle(*end_rect, outline="#00ff88", width=3 if active_target == "end" else 2)
+            draw_label(start_rect, "start", "1")
+            draw_label(end_rect, "end", "2")
             if active_target == "start":
                 self.canvas.create_rectangle(*start_rect, outline="#ff5555", width=3)
                 self._draw_handles(start_rect, "#ff5555")
@@ -800,10 +1094,15 @@ class Application(tk.Tk):
             self._manual_display["end"] = end_rect
             self.canvas.create_rectangle(*end_rect, outline="#00ff88", width=3)
             self._draw_handles(end_rect, "#00ff88")
+            draw_label(end_rect, "end", "2")
+
+        self.canvas.tag_bind("crop_label", "<Enter>", lambda _e: self.canvas.config(cursor="hand2"))
+        self.canvas.tag_bind("crop_label", "<Leave>", lambda _e: self.canvas.config(cursor=""))
 
         self._update_crop_info(manual)
         has_prev, has_next = self._navigation_flags()
         self._update_canvas_navigation(has_prev, has_next)
+        self._refresh_legend_state()
 
     def _show_placeholder(self, message: str) -> None:
         self.canvas.delete("all")
