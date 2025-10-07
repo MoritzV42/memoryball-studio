@@ -7,6 +7,7 @@ from typing import Iterable, Optional
 
 import cv2
 import numpy as np
+import subprocess
 from PIL import Image, ImageOps
 from pillow_heif import register_heif_opener
 
@@ -101,21 +102,61 @@ def _iter_motion_frames(
         crop = _interpolate_crop(start, end, fraction)
         cropped = rgb_image.crop(crop.as_tuple())
         resized = cropped.resize((target, target), Image.Resampling.LANCZOS)
-        frame_array = np.array(resized)
-        frame_bgr = cv2.cvtColor(frame_array, cv2.COLOR_RGB2BGR)
-        yield frame_bgr
+        frame_array = np.asarray(resized, dtype=np.uint8)
+        yield frame_array
 
 
-def _write_video(frames: Iterable[np.ndarray], path: Path, fps: float, size: int) -> None:
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(str(path), fourcc, fps, (size, size))
-    if not writer.isOpened():  # pragma: no cover - defensive
-        raise RuntimeError(f"Kann Videodatei nicht schreiben: {path}")
+def _encode_video(
+    frames: Iterable[np.ndarray],
+    path: Path,
+    fps: float,
+    size: int,
+    options: ProcessingOptions,
+) -> None:
+    ffmpeg_cmd = [
+        "ffmpeg",
+        "-y",
+        "-loglevel",
+        "error",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-s",
+        f"{size}x{size}",
+        "-r",
+        f"{fps}",
+        "-i",
+        "pipe:0",
+        "-an",
+        "-c:v",
+        "libx264",
+        "-preset",
+        options.preset,
+        "-crf",
+        str(options.crf),
+        "-pix_fmt",
+        "yuv420p",
+        str(path),
+    ]
+
+    proc = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE)
+    assert proc.stdin is not None
+
     try:
         for frame in frames:
-            writer.write(frame)
+            if frame.shape != (size, size, 3):  # pragma: no cover - defensive
+                raise RuntimeError(
+                    f"Ungültige Framegröße {frame.shape}, erwartet {(size, size, 3)}"
+                )
+            rgb = np.ascontiguousarray(frame)
+            proc.stdin.write(rgb.tobytes())
     finally:
-        writer.release()
+        proc.stdin.close()
+        proc.wait()
+
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg fehlgeschlagen für {path}")
 
 
 def process_image(
@@ -157,6 +198,6 @@ def process_image(
         IMAGE_CLIP_DURATION,
         options.motion_enabled,
     )
-    _write_video(frames, output_path, fps, options.size)
+    _encode_video(frames, output_path, fps, options.size, options)
     return ImageResult(source=path, target=output_path, processed=True)
 
