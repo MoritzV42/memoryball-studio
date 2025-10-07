@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import threading
 import tkinter as tk
 from pathlib import Path
@@ -47,11 +50,13 @@ class Application(tk.Tk):
         self.media_files: list[Path] = []
         self.image_files: list[Path] = []
         self.manual_crops: dict[Path, CropBox] = {}
+        self._list_paths: list[Path] = []
         self.current_path: Optional[Path] = None
         self.current_image: Optional[Image.Image] = None
         self._tk_image: Optional[ImageTk.PhotoImage] = None
         self._preview_cropper: Optional[FaceCropper] = None
         self._updating_controls = False
+        self.output_media_files: list[Path] = []
 
         self.input_var = tk.StringVar()
         self.output_var = tk.StringVar()
@@ -65,6 +70,8 @@ class Application(tk.Tk):
         self.offset_y = tk.DoubleVar(value=0.0)
         self.progress_var = tk.StringVar(value="Bereit.")
         self.crop_info_var = tk.StringVar(value="Kein Bild ausgewählt.")
+        self.position_var = tk.StringVar(value="0/0")
+        self.output_info_var = tk.StringVar(value="Keine Ausgabedateien.")
 
         self._build_layout()
         self.detection_mode_var.trace_add("write", self._on_detection_change)
@@ -147,10 +154,11 @@ class Application(tk.Tk):
         main.grid(row=0, column=0, sticky="nsew")
         main.columnconfigure(0, weight=0)
         main.columnconfigure(1, weight=1)
+        main.columnconfigure(2, weight=0)
         main.rowconfigure(1, weight=1)
 
         top = ttk.Frame(main)
-        top.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 16))
+        top.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 16))
         top.columnconfigure(0, weight=1)
 
         input_card = ttk.Frame(top, style="Card.TFrame", padding=16)
@@ -208,7 +216,7 @@ class Application(tk.Tk):
         list_frame.grid(row=1, column=0, sticky="nswe")
         list_frame.columnconfigure(0, weight=1)
         list_frame.rowconfigure(1, weight=1)
-        ttk.Label(list_frame, text="Bilder", style="Heading.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(list_frame, text="Bilder & Videos", style="Heading.TLabel").grid(row=0, column=0, sticky="w")
 
         self.listbox = tk.Listbox(list_frame, exportselection=False, height=20)
         self.listbox.grid(row=1, column=0, sticky="nswe", pady=(6, 0))
@@ -242,8 +250,17 @@ class Application(tk.Tk):
         )
         self.canvas.grid(row=1, column=0, sticky="n", pady=(12, 16))
 
+        nav = ttk.Frame(preview)
+        nav.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+        nav.columnconfigure(1, weight=1)
+        self.prev_button = ttk.Button(nav, text="◀", width=4, command=self._show_previous_image)
+        self.prev_button.grid(row=0, column=0, sticky="w")
+        ttk.Label(nav, textvariable=self.position_var, style="Section.TLabel").grid(row=0, column=1)
+        self.next_button = ttk.Button(nav, text="▶", width=4, command=self._show_next_image)
+        self.next_button.grid(row=0, column=2, sticky="e")
+
         sliders = ttk.Frame(preview)
-        sliders.grid(row=2, column=0, sticky="ew")
+        sliders.grid(row=3, column=0, sticky="ew")
         sliders.columnconfigure(1, weight=1)
         sliders.columnconfigure(3, weight=1)
 
@@ -268,14 +285,42 @@ class Application(tk.Tk):
         )
 
         ttk.Label(preview, textvariable=self.crop_info_var, style="Section.TLabel").grid(
-            row=3,
+            row=4,
             column=0,
             sticky="w",
             pady=(12, 0),
         )
 
+        output = ttk.Frame(main, style="Card.TFrame", padding=16)
+        output.grid(row=1, column=2, sticky="nsw", padx=(16, 0))
+        output.columnconfigure(0, weight=1)
+        output.rowconfigure(1, weight=1)
+        ttk.Label(output, text="Ausgabe", style="Heading.TLabel").grid(row=0, column=0, sticky="w")
+        self.output_listbox = tk.Listbox(output, exportselection=False, height=20)
+        self.output_listbox.grid(row=1, column=0, sticky="nswe", pady=(6, 0))
+        self.output_listbox.configure(
+            background="#0b0f1c",
+            foreground="#f5f7fa",
+            borderwidth=0,
+            highlightthickness=0,
+            selectbackground="#1f6feb",
+            selectforeground="#ffffff",
+            activestyle="none",
+        )
+        self.output_listbox.bind("<Double-Button-1>", self._open_output_file)
+        output_scroll = ttk.Scrollbar(output, orient="vertical", command=self.output_listbox.yview)
+        output_scroll.grid(row=1, column=1, sticky="ns")
+        self.output_listbox.configure(yscrollcommand=output_scroll.set)
+        ttk.Label(output, textvariable=self.output_info_var, style="Section.TLabel").grid(
+            row=2,
+            column=0,
+            columnspan=2,
+            sticky="w",
+            pady=(12, 0),
+        )
+
         bottom = ttk.Frame(main)
-        bottom.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(16, 0))
+        bottom.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(16, 0))
         bottom.columnconfigure(0, weight=1)
 
         ttk.Label(bottom, textvariable=self.progress_var, style="Section.TLabel").grid(row=0, column=0, sticky="w")
@@ -283,6 +328,7 @@ class Application(tk.Tk):
         self.convert_button.grid(row=0, column=1, sticky="e")
 
         self._set_controls_enabled(False)
+        self._refresh_output_list()
 
     # ------------------------------------------------------------------
     # Helpers
@@ -294,13 +340,14 @@ class Application(tk.Tk):
             return path
 
     def _set_controls_enabled(self, enabled: bool) -> None:
-        state = "normal" if enabled else "disabled"
         for scale in (self.size_scale, self.x_scale, self.y_scale):
             if enabled:
                 scale.state(["!disabled"])
             else:
                 scale.state(["disabled"])
-        self.listbox.configure(state=state)
+        self.prev_button.state(["!disabled"] if enabled else ["disabled"])
+        self.next_button.state(["!disabled"] if enabled else ["disabled"])
+        self.listbox.configure(state="normal")
 
     def _default_output_for(self, path: Path) -> Path:
         return path.parent / f"Converted {path.name}"
@@ -341,6 +388,7 @@ class Application(tk.Tk):
         selection = filedialog.askdirectory(title="Ausgabeordner wählen")
         if selection:
             self.output_var.set(selection)
+            self._refresh_output_list()
 
     def _set_input_path(self, path: Path) -> None:
         self.input_path = self._normalize_path(path)
@@ -349,17 +397,20 @@ class Application(tk.Tk):
         self.output_var.set(str(default_output))
         self.manual_crops.clear()
         self._load_media_files()
+        self._refresh_output_list()
 
     def _load_media_files(self) -> None:
         self.media_files.clear()
         self.image_files.clear()
         self.listbox.delete(0, tk.END)
+        self._list_paths.clear()
         self.canvas.delete("all")
         self.current_path = None
         self.current_image = None
         self._tk_image = None
         self.crop_info_var.set("Kein Bild ausgewählt.")
         self._set_controls_enabled(False)
+        self.position_var.set("0/0")
 
         if not self.input_path:
             return
@@ -367,34 +418,58 @@ class Application(tk.Tk):
         files = [self._normalize_path(path) for path in iter_media_files(self.input_path)]
         files.sort()
         self.media_files = files
-        self.image_files = [f for f in files if is_image(f)]
-
-        for image in self.image_files:
-            display = image.relative_to(self.input_path)
-            self.listbox.insert(tk.END, str(display))
+        for media in self.media_files:
+            display = media.relative_to(self.input_path)
+            prefix = "🖼️ " if is_image(media) else "🎞️ "
+            self.listbox.insert(tk.END, f"{prefix}{display}")
+            self._list_paths.append(media)
+            if is_image(media):
+                self.image_files.append(media)
 
         if self.image_files:
-            self.listbox.selection_set(0)
+            first_image = self.image_files[0]
+            index = self._list_paths.index(first_image)
+            self.listbox.selection_set(index)
+            self.listbox.see(index)
             self._on_listbox_select()
-            self.progress_var.set(f"{len(self.image_files)} Bilder geladen.")
+            video_count = len(self.media_files) - len(self.image_files)
+            if video_count:
+                self.progress_var.set(
+                    f"{len(self.media_files)} Dateien geladen – {len(self.image_files)} Bilder, {video_count} Videos."
+                )
+            else:
+                self.progress_var.set(f"{len(self.image_files)} Bilder geladen.")
         else:
             self.progress_var.set("Keine unterstützten Bilder gefunden.")
+            if self.media_files:
+                self.progress_var.set(
+                    f"{len(self.media_files)} Videos gefunden. Bitte Bilder hinzufügen, um Zuschnitte zu bearbeiten."
+                )
+            self._show_placeholder("Keine Bilder verfügbar.")
+        self._update_navigation_state()
 
     # ------------------------------------------------------------------
     # Preview & manual crop
     # ------------------------------------------------------------------
     def _on_listbox_select(self) -> None:
-        if not self.image_files:
+        if not self._list_paths:
             return
         selection = self.listbox.curselection()
         if not selection:
             return
         index = selection[0]
-        path = self.image_files[index]
+        path = self._list_paths[index]
         if not path.exists():
             self.progress_var.set("Datei nicht gefunden.")
             return
-        self._load_preview(path)
+        if is_image(path):
+            self._load_preview(path)
+        else:
+            self._show_placeholder("Video ausgewählt – keine Vorschau verfügbar.")
+            self._set_controls_enabled(False)
+            self.current_path = None
+            self.current_image = None
+        self._update_navigation_state()
 
     def _load_preview(self, path: Path) -> None:
         self.current_path = path
@@ -406,6 +481,7 @@ class Application(tk.Tk):
             self.manual_crops[path] = crop
         self._apply_crop_to_controls(crop)
         self._set_controls_enabled(True)
+        self._update_navigation_state()
 
     def _auto_crop_current(self) -> CropBox:
         assert self.current_image is not None and self.input_path is not None
@@ -438,6 +514,7 @@ class Application(tk.Tk):
         self.manual_crops[self.current_path] = crop
         self._updating_controls = False
         self._render_preview(crop)
+        self._update_position_label()
 
     def _on_slider_change(self, _value: float | str) -> None:
         if self._updating_controls or self.current_image is None or self.current_path is None:
@@ -453,6 +530,7 @@ class Application(tk.Tk):
         crop = CropBox(x=x, y=y, size=size)
         self.manual_crops[self.current_path] = crop
         self._render_preview(crop)
+        self._update_position_label()
 
     def _render_preview(self, crop: CropBox) -> None:
         if self.current_image is None:
@@ -480,6 +558,70 @@ class Application(tk.Tk):
             f"Ausschnitt: {int(crop.size)}px – Position ({int(crop.x)}, {int(crop.y)})"
         )
 
+    def _show_placeholder(self, message: str) -> None:
+        self.canvas.delete("all")
+        self._tk_image = None
+        self.crop_info_var.set(message)
+
+    def _update_position_label(self) -> None:
+        if not self.image_files or self.current_path is None:
+            self.position_var.set("0/0")
+            return
+        try:
+            index = self.image_files.index(self.current_path)
+        except ValueError:
+            self.position_var.set("0/0")
+            return
+        self.position_var.set(f"{index + 1}/{len(self.image_files)}")
+
+    def _update_navigation_state(self) -> None:
+        if not self.image_files:
+            self.prev_button.state(["disabled"])
+            self.next_button.state(["disabled"])
+            self.position_var.set("0/0")
+            return
+        if self.current_path is None or self.current_path not in self.image_files:
+            self.prev_button.state(["disabled"])
+            self.next_button.state(["disabled"])
+            self.position_var.set(f"0/{len(self.image_files)}")
+            return
+        index = self.image_files.index(self.current_path)
+        if index == 0:
+            self.prev_button.state(["disabled"])
+        else:
+            self.prev_button.state(["!disabled"])
+        if index >= len(self.image_files) - 1:
+            self.next_button.state(["disabled"])
+        else:
+            self.next_button.state(["!disabled"])
+        self.position_var.set(f"{index + 1}/{len(self.image_files)}")
+
+    def _show_previous_image(self) -> None:
+        if self.current_path is None or self.current_path not in self.image_files:
+            return
+        index = self.image_files.index(self.current_path)
+        if index == 0:
+            return
+        next_path = self.image_files[index - 1]
+        list_index = self._list_paths.index(next_path)
+        self.listbox.selection_clear(0, tk.END)
+        self.listbox.selection_set(list_index)
+        self.listbox.see(list_index)
+        self._load_preview(next_path)
+
+    def _show_next_image(self) -> None:
+        if self.current_path is None or self.current_path not in self.image_files:
+            return
+        index = self.image_files.index(self.current_path)
+        if index >= len(self.image_files) - 1:
+            return
+        next_path = self.image_files[index + 1]
+        list_index = self._list_paths.index(next_path)
+        self.listbox.selection_clear(0, tk.END)
+        self.listbox.selection_set(list_index)
+        self.listbox.see(list_index)
+        self._load_preview(next_path)
+
     def _reset_crop_to_auto(self) -> None:
         if self.current_image is None or self.current_path is None:
             return
@@ -498,6 +640,42 @@ class Application(tk.Tk):
         if self.current_path is not None and self.current_image is not None:
             self.manual_crops.pop(self.current_path, None)
             self._reset_crop_to_auto()
+
+    def _refresh_output_list(self) -> None:
+        self.output_media_files.clear()
+        self.output_listbox.delete(0, tk.END)
+        output_dir = self._resolve_output_dir()
+        if output_dir is None:
+            self.output_info_var.set("Kein Ausgabeordner gewählt.")
+            return
+        if not output_dir.exists():
+            self.output_info_var.set("Ausgabeordner wird beim Konvertieren erstellt.")
+            return
+        videos = sorted(path for path in output_dir.iterdir() if is_video(path))
+        for video in videos:
+            self.output_listbox.insert(tk.END, f"🎬 {video.name}")
+            self.output_media_files.append(video)
+        if videos:
+            self.output_info_var.set(f"{len(videos)} Videos im Ausgabeordner.")
+        else:
+            self.output_info_var.set("Keine Videos im Ausgabeordner.")
+
+    def _open_output_file(self, _event: tk.Event) -> None:
+        if not self.output_media_files:
+            return
+        selection = self.output_listbox.curselection()
+        if not selection:
+            return
+        path = self.output_media_files[selection[0]]
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(path)  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", path])
+            else:
+                subprocess.Popen(["xdg-open", path])
+        except Exception as exc:  # pragma: no cover - GUI feedback
+            messagebox.showerror("Fehler", f"Datei kann nicht geöffnet werden: {path.name}\n{exc}")
 
     # ------------------------------------------------------------------
     # Conversion
@@ -588,6 +766,7 @@ class Application(tk.Tk):
         self.progress_var.set("Fertig.")
         self.convert_button.state(["!disabled"])
         messagebox.showinfo("Fertig", "Alle Dateien wurden konvertiert.")
+        self._refresh_output_list()
 
 
 def launch_gui() -> None:
