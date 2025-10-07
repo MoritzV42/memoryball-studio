@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -19,9 +18,6 @@ register_heif_opener()
 
 IMAGE_CLIP_DURATION = 5.0
 DEFAULT_IMAGE_FPS = 30.0
-MAX_MOTION_FRACTION = 0.05
-
-
 @dataclass(slots=True)
 class ImageResult:
     source: Path
@@ -73,10 +69,6 @@ def _apply_crop(img: Image.Image, crop: CropBox) -> Image.Image:
     return img.crop(crop.as_tuple())
 
 
-def _resize_square(arr: Image.Image, target: int) -> Image.Image:
-    return arr.resize((target, target), Image.Resampling.LANCZOS)
-
-
 def _preferred_fps(options: ProcessingOptions) -> float:
     if options.fps == "keep":
         return DEFAULT_IMAGE_FPS
@@ -87,99 +79,35 @@ def _preferred_fps(options: ProcessingOptions) -> float:
     return max(1.0, fps)
 
 
-def _available_motion_types(slack: int) -> list[str]:
-    motions: list[str] = []
-    if slack > 0:
-        motions.extend(["pan_right", "pan_down"])
-    if slack > 1:
-        motions.extend(["zoom_in", "zoom_out"])
-    return motions
-
-
-def _select_motion(path: Path, slack: int) -> str:
-    motions = _available_motion_types(slack)
-    if not motions:
-        return "static"
-    digest = hashlib.sha1(str(path).encode("utf-8")).digest()
-    index = digest[0] % len(motions)
-    return motions[index]
-
-
-def _motion_parameters(base_size: int, target: int, slack: int, motion: str) -> tuple[float, float, float, float, float, float]:
-    center = (base_size - target) / 2
-    if slack <= 0 or motion == "static":
-        return center, center, float(target), center, center, float(target)
-
-    max_shift = max(1.0, min(slack, target * MAX_MOTION_FRACTION))
-
-    if motion == "pan_right":
-        start_x = max(0.0, center - max_shift / 2)
-        end_x = min(base_size - target, start_x + max_shift)
-        start_y = end_y = center
-        size_start = size_end = float(target)
-    elif motion == "pan_down":
-        start_y = max(0.0, center - max_shift / 2)
-        end_y = min(base_size - target, start_y + max_shift)
-        start_x = end_x = center
-        size_start = size_end = float(target)
-    else:
-        zoom = max(1.0, min(slack, target * MAX_MOTION_FRACTION))
-        if motion == "zoom_in":
-            size_start = min(base_size, float(target + zoom))
-            size_end = float(target)
-        else:  # zoom_out
-            size_start = float(target)
-            size_end = min(base_size, float(target + zoom))
-        start_x = (base_size - size_start) / 2
-        start_y = (base_size - size_start) / 2
-        end_x = (base_size - size_end) / 2
-        end_y = (base_size - size_end) / 2
-
-    return start_x, start_y, size_start, end_x, end_y, size_end
-
-
 def _iter_motion_frames(
     base: Image.Image,
     target: int,
-    path: Path,
+    _path: Path,
     fps: float,
     duration: float,
 ) -> Iterable[np.ndarray]:
-    base_size = min(base.size)
-    if base_size < target:
-        base = _resize_square(base, target)
-        base_size = target
+    """Yield frames for an image clip without artificial zooming or panning.
 
-    slack = base_size - target
-    motion = _select_motion(path, slack)
-    start_x, start_y, size_start, end_x, end_y, size_end = _motion_parameters(base_size, target, slack, motion)
+    Historically the generator attempted to create motion by zooming into the
+    cropped image. In practice this resulted in extreme close-ups when working
+    with high-resolution photos, because only a very small portion of the image
+    ended up in the 480x480 output. To match the expected behaviour—crop to a
+    square and simply scale it down—we now keep the full crop for every frame.
+
+    The ``_path`` argument remains for backwards compatibility with older
+    callers but is intentionally unused.
+    """
 
     frames = max(1, int(round(duration * fps)))
     base_rgb = base.convert("RGB")
+    resized = base_rgb.resize((target, target), Image.Resampling.LANCZOS)
+    frame_array = np.array(resized)
+    frame_bgr = cv2.cvtColor(frame_array, cv2.COLOR_RGB2BGR)
 
-    for index in range(frames):
-        if frames == 1:
-            t = 0.0
-        else:
-            t = index / (frames - 1)
-        size = size_start + (size_end - size_start) * t
-        x = start_x + (end_x - start_x) * t
-        y = start_y + (end_y - start_y) * t
-
-        size = clamp(size, 1, base_size)
-        x = clamp(x, 0, base_size - size)
-        y = clamp(y, 0, base_size - size)
-
-        crop_box = (
-            int(round(x)),
-            int(round(y)),
-            int(round(x + size)),
-            int(round(y + size)),
-        )
-        cropped = base_rgb.crop(crop_box)
-        frame = cropped.resize((target, target), Image.Resampling.LANCZOS)
-        array = np.array(frame)
-        yield cv2.cvtColor(array, cv2.COLOR_RGB2BGR)
+    for _index in range(frames):
+        # ``VideoWriter`` expects a new array for each frame. ``copy`` ensures
+        # downstream consumers cannot accidentally mutate the shared buffer.
+        yield frame_bgr.copy()
 
 
 def _write_video(frames: Iterable[np.ndarray], path: Path, fps: float, size: int) -> None:
