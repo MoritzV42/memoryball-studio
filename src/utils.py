@@ -30,6 +30,20 @@ class CropBox:
 
 
 @dataclass(slots=True)
+class ManualCrop:
+    """Stores start and end crops for optional motion effects."""
+
+    start: CropBox
+    end: CropBox
+
+    def copy(self) -> "ManualCrop":
+        return ManualCrop(
+            start=CropBox(self.start.x, self.start.y, self.start.size),
+            end=CropBox(self.end.x, self.end.y, self.end.size),
+        )
+
+
+@dataclass(slots=True)
 class ProcessingOptions:
     input_path: Path
     output_dir: Path
@@ -53,6 +67,7 @@ class ProcessingOptions:
     log_level: str = "info"
     face_detection_enabled: bool = True
     detection_mode: str = "face"
+    motion_enabled: bool = True
 
 
 class ProgressLogger:
