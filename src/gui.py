@@ -1098,11 +1098,16 @@ class Application(tk.Tk):
         if diameter <= 0:
             return
         margin = diameter * self.CIRCLE_MARGIN
+        top = y1
+        bottom = y2 - 2 * margin
+        if bottom <= top:
+            top = y1 + margin
+            bottom = y2 - margin
         self.canvas.create_oval(
             x1 + margin,
-            y1 + margin,
+            top,
             x2 - margin,
-            y2 - margin,
+            bottom,
             outline=color,
             width=line_width,
         )
