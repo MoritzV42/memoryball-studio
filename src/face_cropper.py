@@ -21,7 +21,7 @@ except ImportError as exc:  # pragma: no cover
     mp = None
     _IMPORT_ERROR = exc
 
-from .utils import CropBox, clamp
+from .utils import CropBox, clamp, expand_crop_for_circle, max_crop_size
 
 
 @dataclass(slots=True)
@@ -118,7 +118,8 @@ class FaceCropper:
         x = clamp(cx - size / 2, 0, max(0, width - size))
         y = clamp(cy - size / 2, 0, max(0, height - size))
         size = min(size, width, height)
-        return CropBox(x=x, y=y, size=size)
+        base = CropBox(x=x, y=y, size=size)
+        return self._circle_aligned_box(base, width, height)
 
     def _detect_with_mediapipe(self, image: np.ndarray) -> List[DetectionResult]:
         detections: List[DetectionResult] = []
@@ -145,7 +146,8 @@ class FaceCropper:
             size = max(size, self.min_face * min(w, h))
             x_adj = clamp(x + width / 2 - size / 2, 0, max(0, w - size))
             y_adj = clamp(y + height / 2 - size / 2, 0, max(0, h - size))
-            detections.append(DetectionResult(score=1.0, box=CropBox(x=x_adj, y=y_adj, size=size)))
+            base = CropBox(x=x_adj, y=y_adj, size=size)
+            detections.append(DetectionResult(score=1.0, box=self._circle_aligned_box(base, w, h)))
         return detections
 
     def _detect_people(self, image: np.ndarray) -> List[DetectionResult]:
@@ -162,8 +164,20 @@ class FaceCropper:
             cy = y + height / 2
             x_adj = clamp(cx - size / 2, 0, max(0, w - size))
             y_adj = clamp(cy - size / 2, 0, max(0, h - size))
-            detections.append(DetectionResult(score=float(score), box=CropBox(x=x_adj, y=y_adj, size=size)))
+            base = CropBox(x=x_adj, y=y_adj, size=size)
+            detections.append(DetectionResult(score=float(score), box=self._circle_aligned_box(base, w, h)))
         return detections
+
+    def _circle_aligned_box(self, box: CropBox, width: int, height: int) -> CropBox:
+        expanded = expand_crop_for_circle(box)
+        min_size = max(box.size, self.min_face * min(width, height))
+        max_size = max_crop_size(width, height)
+        size = clamp(expanded.size, min_size, max_size)
+        center_x = expanded.x + expanded.size / 2
+        center_y = expanded.y + expanded.size / 2
+        x = center_x - size / 2
+        y = center_y - size / 2
+        return CropBox(x=x, y=y, size=size)
 
     def detect_subjects(self, image: np.ndarray) -> List[DetectionResult]:
         if self.mode == "person":
@@ -171,6 +185,21 @@ class FaceCropper:
         if self._use_mediapipe:
             return self._detect_with_mediapipe(image)
         return self._detect_with_cascade(image)
+
+    def select_detection(self, detections: List[DetectionResult], width: int, height: int) -> Optional[DetectionResult]:
+        if not detections:
+            return None
+        if self.face_priority == "center":
+            center_x = width / 2
+            center_y = height / 2
+            return min(
+                detections,
+                key=lambda det: (det.box.x + det.box.size / 2 - center_x) ** 2
+                + (det.box.y + det.box.size / 2 - center_y) ** 2,
+            )
+        if self.face_priority == "largest" or self.face_priority == "all":
+            return max(detections, key=lambda det: det.box.size)
+        return detections[0]
 
     def _axis_spans(
         self,
@@ -252,10 +281,17 @@ class FaceCropper:
     def track(self, frame: np.ndarray, width: int, height: int, fallback: CropBox) -> CropBox:
         detections = self.detect_subjects(frame)
         window_size = fallback.size
-        focus = self.focus_window(detections, width, height, window_size)
+        focus: Optional[CropBox]
+        target = self.select_detection(detections, width, height)
+        if target is not None:
+            window_size = target.box.size
+            focus = CropBox(target.box.x, target.box.y, target.box.size)
+        else:
+            focus = self.focus_window(detections, width, height, window_size)
         if focus is None:
             self._lost_frames += 1
             if self._last_smoothed is not None and self._lost_frames <= self.max_tracking_gap:
+                window_size = self._last_smoothed.size
                 preserved = CropBox(self._last_smoothed.x, self._last_smoothed.y, window_size)
                 preserved.x = clamp(preserved.x, 0, max(0, width - window_size))
                 preserved.y = clamp(preserved.y, 0, max(0, height - window_size))

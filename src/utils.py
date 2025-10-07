@@ -35,6 +35,37 @@ class CropBox:
 
 
 CROP_OVERFLOW_RATIO = 0.5
+ORIENTATION_CIRCLE_MARGIN = 0.1
+
+
+def _circle_fraction(circle_margin: float) -> float:
+    """Return the fraction of a square that remains after applying the circle margin."""
+
+    if circle_margin <= 0.0:
+        return 1.0
+    return max(0.0, 1.0 - 2.0 * circle_margin)
+
+
+def square_size_for_circle(diameter: float, circle_margin: float = ORIENTATION_CIRCLE_MARGIN) -> float:
+    """Return the side length of a square whose inscribed circle matches ``diameter``."""
+
+    diameter = max(0.0, float(diameter))
+    fraction = _circle_fraction(circle_margin)
+    if fraction <= 0.0:
+        return diameter
+    return diameter / fraction if diameter else 0.0
+
+
+def expand_crop_for_circle(crop: CropBox, circle_margin: float = ORIENTATION_CIRCLE_MARGIN) -> CropBox:
+    """Expand ``crop`` so that the orientation circle matches the detected region."""
+
+    fraction = _circle_fraction(circle_margin)
+    if fraction <= 0.0:
+        return CropBox(crop.x, crop.y, crop.size)
+    new_size = crop.size / fraction
+    center_x = crop.x + crop.size / 2.0
+    center_y = crop.y + crop.size / 2.0
+    return CropBox(x=center_x - new_size / 2.0, y=center_y - new_size / 2.0, size=new_size)
 
 
 def crop_position_bounds(size: float, dimension: int, overflow_ratio: float = CROP_OVERFLOW_RATIO) -> Tuple[float, float]:

@@ -16,6 +16,7 @@ from .utils import (
     normalize_crop_with_overflow,
     run_ffprobe,
     safe_output_path,
+    square_size_for_circle,
 )
 
 
@@ -27,10 +28,10 @@ class VideoResult:
 
 
 def _center_crop(width: int, height: int, pad: float = 0.0) -> CropBox:
-    size = min(width, height)
+    diameter = float(min(width, height))
     if pad:
-        size = int(size * (1 - pad))
-        size = max(1, size)
+        diameter = max(1.0, diameter * (1 - pad))
+    size = square_size_for_circle(diameter)
     x = (width - size) / 2
     y = (height - size) / 2
     return CropBox(x=x, y=y, size=size)
