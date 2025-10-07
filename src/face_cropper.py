@@ -179,6 +179,70 @@ class FaceCropper:
         y = center_y - size / 2
         return CropBox(x=x, y=y, size=size)
 
+    def _filter_relevant_detections(self, detections: List[DetectionResult]) -> List[DetectionResult]:
+        if not detections:
+            return []
+        max_size = max((det.box.size for det in detections), default=0.0)
+        if max_size <= 0:
+            return []
+        size_threshold = max_size * 0.45
+        filtered = [
+            det
+            for det in detections
+            if det.box.size >= size_threshold or det.score >= 0.6
+        ]
+        if len(filtered) >= 2:
+            return sorted(filtered, key=lambda det: det.box.size, reverse=True)[:5]
+
+        sorted_by_size = sorted(detections, key=lambda det: det.box.size, reverse=True)
+        if not sorted_by_size:
+            return []
+
+        result: List[DetectionResult] = [filtered[0] if filtered else sorted_by_size[0]]
+        if len(sorted_by_size) >= 2:
+            candidate = sorted_by_size[1]
+            if candidate.box.size >= max_size * 0.35 or candidate.score >= 0.55:
+                result.append(candidate)
+        return result
+
+    def combine_detections(
+        self,
+        detections: List[DetectionResult],
+        width: int,
+        height: int,
+    ) -> Optional[CropBox]:
+        relevant = self._filter_relevant_detections(detections)
+        if len(relevant) < 2:
+            return None
+        min_x = min(det.box.x for det in relevant)
+        max_x = max(det.box.x + det.box.size for det in relevant)
+        min_y = min(det.box.y for det in relevant)
+        max_y = max(det.box.y + det.box.size for det in relevant)
+        cover_width = max_x - min_x
+        cover_height = max_y - min_y
+        largest_size = max(det.box.size for det in relevant)
+        min_size = max(self.min_face * min(width, height), largest_size)
+        max_size = max_crop_size(width, height)
+        size = max(cover_width, cover_height, largest_size)
+        size = clamp(size * 1.05, min_size, max_size)
+
+        weights = [max(0.1, det.score) * det.box.size for det in relevant]
+        total_weight = sum(weights) or float(len(relevant))
+        centers_x = [(det.box.x + det.box.size / 2) for det in relevant]
+        centers_y = [(det.box.y + det.box.size / 2) for det in relevant]
+        weighted_cx = sum(cx * w for cx, w in zip(centers_x, weights)) / total_weight
+        weighted_cy = sum(cy * w for cy, w in zip(centers_y, weights)) / total_weight
+
+        min_allowed_x = max_x - size
+        max_allowed_x = min_x
+        min_allowed_y = max_y - size
+        max_allowed_y = min_y
+
+        x = clamp(weighted_cx - size / 2, min_allowed_x, max_allowed_x)
+        y = clamp(weighted_cy - size / 2, min_allowed_y, max_allowed_y)
+
+        return CropBox(x=x, y=y, size=size)
+
     def detect_subjects(self, image: np.ndarray) -> List[DetectionResult]:
         if self.mode == "person":
             return self._detect_people(image)
@@ -282,12 +346,17 @@ class FaceCropper:
         detections = self.detect_subjects(frame)
         window_size = fallback.size
         focus: Optional[CropBox]
-        target = self.select_detection(detections, width, height)
-        if target is not None:
-            window_size = target.box.size
-            focus = CropBox(target.box.x, target.box.y, target.box.size)
+        combined = self.combine_detections(detections, width, height)
+        if combined is not None:
+            window_size = combined.size
+            focus = combined
         else:
-            focus = self.focus_window(detections, width, height, window_size)
+            target = self.select_detection(detections, width, height)
+            if target is not None:
+                window_size = target.box.size
+                focus = CropBox(target.box.x, target.box.y, target.box.size)
+            else:
+                focus = self.focus_window(detections, width, height, window_size)
         if focus is None:
             self._lost_frames += 1
             if self._last_smoothed is not None and self._lost_frames <= self.max_tracking_gap:

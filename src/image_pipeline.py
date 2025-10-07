@@ -69,16 +69,20 @@ def determine_crop_box(
         detections = face_cropper.detect_subjects(array_bgr)
         crop_box = base_crop
         if detections:
-            target = face_cropper.select_detection(detections, width, height)
-            if target is not None:
-                size = target.box.size
-                center_x = target.box.x + size / 2
-                center_y = target.box.y + size / 2
-                crop_box = CropBox(x=center_x - size / 2, y=center_y - size / 2, size=size)
+            combined = face_cropper.combine_detections(detections, width, height)
+            if combined is not None:
+                crop_box = combined
             else:
-                focus = face_cropper.focus_window(detections, width, height, base_crop.size)
-                if focus is not None:
-                    crop_box = focus
+                target = face_cropper.select_detection(detections, width, height)
+                if target is not None:
+                    size = target.box.size
+                    center_x = target.box.x + size / 2
+                    center_y = target.box.y + size / 2
+                    crop_box = CropBox(x=center_x - size / 2, y=center_y - size / 2, size=size)
+                else:
+                    focus = face_cropper.focus_window(detections, width, height, base_crop.size)
+                    if focus is not None:
+                        crop_box = focus
     else:
         crop_box = base_crop
     return _normalize_crop(width, height, crop_box)

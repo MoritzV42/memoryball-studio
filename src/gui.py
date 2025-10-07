@@ -909,7 +909,8 @@ class Application(tk.Tk):
         if self.motion_enabled_var.get():
             start_size = square_size_for_circle(float(min(width, height)))
             start_x = (width - start_size) / 2
-            start_y = (height - start_size) / 2
+            vertical_margin = start_size * self.CIRCLE_MARGIN
+            start_y = (height - start_size) / 2 + vertical_margin
             start = self._normalize_crop_box(CropBox(start_x, start_y, start_size), width, height)
         else:
             start = CropBox(end.x, end.y, end.size)
