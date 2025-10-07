@@ -19,6 +19,7 @@ from .utils import (
     clamp,
     normalize_crop_with_overflow,
     safe_output_path,
+    square_size_for_circle,
 )
 
 register_heif_opener()
@@ -33,11 +34,15 @@ class ImageResult:
     processed: bool
 
 
-def _center_square(width: int, height: int, pad: float = 0.0) -> CropBox:
-    size = min(width, height)
+def _circle_base_size(width: int, height: int, pad: float = 0.0) -> float:
+    diameter = float(min(width, height))
     if pad:
-        size = int(size * (1 - pad))
-        size = max(1, size)
+        diameter = max(1.0, diameter * (1 - pad))
+    return square_size_for_circle(diameter)
+
+
+def _center_square(width: int, height: int, pad: float = 0.0) -> CropBox:
+    size = _circle_base_size(width, height, pad)
     x = (width - size) / 2
     y = (height - size) / 2
     return CropBox(x=x, y=y, size=size)
@@ -62,8 +67,18 @@ def determine_crop_box(
         array = np.array(img.convert("RGB"))
         array_bgr = array[:, :, ::-1]
         detections = face_cropper.detect_subjects(array_bgr)
-        focus = face_cropper.focus_window(detections, width, height, base_crop.size)
-        crop_box = focus or base_crop
+        crop_box = base_crop
+        if detections:
+            target = face_cropper.select_detection(detections, width, height)
+            if target is not None:
+                size = target.box.size
+                center_x = target.box.x + size / 2
+                center_y = target.box.y + size / 2
+                crop_box = CropBox(x=center_x - size / 2, y=center_y - size / 2, size=size)
+            else:
+                focus = face_cropper.focus_window(detections, width, height, base_crop.size)
+                if focus is not None:
+                    crop_box = focus
     else:
         crop_box = base_crop
     return _normalize_crop(width, height, crop_box)

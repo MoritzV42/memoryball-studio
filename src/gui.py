@@ -20,6 +20,7 @@ from .utils import (
     CropBox,
     ManualCrop,
     ProcessingOptions,
+    ORIENTATION_CIRCLE_MARGIN,
     clamp,
     crop_position_bounds,
     ensure_dir,
@@ -29,6 +30,7 @@ from .utils import (
     max_crop_size,
     normalize_crop_with_overflow,
     setup_environment,
+    square_size_for_circle,
 )
 from .video_pipeline import process_video
 
@@ -37,7 +39,7 @@ class Application(tk.Tk):
     """Tkinter-Anwendung mit Vorschau und manueller Zuschnittssteuerung."""
 
     CANVAS_SIZE = 520
-    CIRCLE_MARGIN = 0.1
+    CIRCLE_MARGIN = ORIENTATION_CIRCLE_MARGIN
     DETECTION_CHOICES = [
         ("face", "Gesichtserkennung"),
         ("person", "Menscherkennung"),
@@ -905,7 +907,7 @@ class Application(tk.Tk):
         width, height = self.current_image.size
         end = self._normalize_crop_box(CropBox(crop.x, crop.y, crop.size), width, height)
         if self.motion_enabled_var.get():
-            start_size = end.size
+            start_size = square_size_for_circle(float(min(width, height)))
             start_x = (width - start_size) / 2
             start_y = (height - start_size) / 2
             start = self._normalize_crop_box(CropBox(start_x, start_y, start_size), width, height)
