@@ -86,6 +86,53 @@ def determine_crop_box(
     else:
         crop_box = base_crop
     return _normalize_crop(width, height, crop_box)
+
+
+def determine_motion_manual(
+    img: Image.Image,
+    options: ProcessingOptions,
+    face_cropper: Optional[FaceCropper],
+) -> ManualCrop:
+    width, height = img.size
+    base_crop = _center_square(width, height, options.pad)
+    if not options.motion_enabled:
+        normalized = _normalize_crop(width, height, base_crop)
+        start = CropBox(normalized.x, normalized.y, normalized.size)
+        end = CropBox(normalized.x, normalized.y, normalized.size)
+        return ManualCrop(start=start, end=end)
+    if not options.face_detection_enabled or face_cropper is None:
+        normalized = _normalize_crop(width, height, base_crop)
+        start = CropBox(normalized.x, normalized.y, normalized.size)
+        end = CropBox(normalized.x, normalized.y, normalized.size)
+        return ManualCrop(start=start, end=end)
+
+    array = np.array(img.convert("RGB"))
+    array_bgr = array[:, :, ::-1]
+    detections = face_cropper.detect_subjects(array_bgr)
+    if not detections:
+        fallback = determine_crop_box(img, options, face_cropper)
+        start = CropBox(fallback.x, fallback.y, fallback.size)
+        end = CropBox(fallback.x, fallback.y, fallback.size)
+        return ManualCrop(start=start, end=end)
+
+    plan = face_cropper.plan_motion(detections, width, height)
+    if plan is None:
+        fallback = determine_crop_box(img, options, face_cropper)
+        start = CropBox(fallback.x, fallback.y, fallback.size)
+        end = CropBox(fallback.x, fallback.y, fallback.size)
+        return ManualCrop(start=start, end=end)
+
+    start, end = plan
+    start = _normalize_crop(width, height, start)
+    end = _normalize_crop(width, height, end)
+    start = CropBox(start.x, start.y, start.size)
+    end = CropBox(end.x, end.y, end.size)
+
+    direction = getattr(options, "motion_direction", "in") or "in"
+    if isinstance(direction, str) and direction.lower() == "out":
+        start, end = end, start
+
+    return ManualCrop(start=start, end=end)
 def _preferred_fps(options: ProcessingOptions) -> float:
     if options.fps == "keep":
         return DEFAULT_IMAGE_FPS
@@ -203,9 +250,14 @@ def process_image(
             start_crop = _normalize_crop(width, height, manual_crop.start)
             end_crop = _normalize_crop(width, height, manual_crop.end)
         else:
-            auto_crop = determine_crop_box(img, options, face_cropper)
-            start_crop = _normalize_crop(width, height, auto_crop)
-            end_crop = start_crop
+            if options.motion_enabled:
+                auto_manual = determine_motion_manual(img, options, face_cropper)
+                start_crop = _normalize_crop(width, height, auto_manual.start)
+                end_crop = _normalize_crop(width, height, auto_manual.end)
+            else:
+                auto_crop = determine_crop_box(img, options, face_cropper)
+                start_crop = _normalize_crop(width, height, auto_crop)
+                end_crop = start_crop
 
         if not options.motion_enabled:
             start_crop = CropBox(end_crop.x, end_crop.y, end_crop.size)

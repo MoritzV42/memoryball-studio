@@ -15,7 +15,7 @@ from typing import Optional
 from PIL import Image, ImageTk
 
 from .face_cropper import FaceCropper
-from .image_pipeline import determine_crop_box, process_image
+from .image_pipeline import determine_crop_box, determine_motion_manual, process_image
 from .utils import (
     CropBox,
     ManualCrop,
@@ -30,7 +30,6 @@ from .utils import (
     max_crop_size,
     normalize_crop_with_overflow,
     setup_environment,
-    square_size_for_circle,
 )
 from .video_pipeline import process_video
 
@@ -44,6 +43,10 @@ class Application(tk.Tk):
         ("face", "Gesichtserkennung"),
         ("person", "Menscherkennung"),
         ("none", "Keine Erkennung"),
+    ]
+    MOTION_DIRECTION_CHOICES = [
+        ("in", "Reinzoomen"),
+        ("out", "Rauszoomen"),
     ]
 
     def __init__(self) -> None:
@@ -87,6 +90,16 @@ class Application(tk.Tk):
         self.offset_y = tk.DoubleVar(value=0.0)
         self.motion_enabled_var = tk.BooleanVar(value=True)
         self.active_crop_var = tk.StringVar(value="end")
+        self.motion_direction_var = tk.StringVar(value="in")
+        self._motion_direction_label_by_value = {
+            value: label for value, label in self.MOTION_DIRECTION_CHOICES
+        }
+        self._motion_direction_value_by_label = {
+            label: value for value, label in self.MOTION_DIRECTION_CHOICES
+        }
+        self.motion_direction_label_var = tk.StringVar(
+            value=self._motion_direction_label_by_value["in"]
+        )
         self.progress_var = tk.StringVar(value="Bereit.")
         self.crop_info_var = tk.StringVar(value="Kein Bild ausgewählt.")
         self.position_var = tk.StringVar(value="0/0")
@@ -99,6 +112,7 @@ class Application(tk.Tk):
         self._conversion_active = False
 
         self._build_layout()
+        self._update_motion_direction_state()
         self.after(1000, self._maybe_start_tutorial)
         self.detection_mode_var.trace_add("write", self._on_detection_change)
         self.active_crop_var.trace_add("write", self._on_active_crop_change)
@@ -339,8 +353,20 @@ class Application(tk.Tk):
             variable=self.motion_enabled_var,
             command=self._on_motion_toggle,
         ).grid(row=0, column=0, sticky="w")
+        self.motion_direction_combo = ttk.Combobox(
+            motion_controls,
+            values=[label for _value, label in self.MOTION_DIRECTION_CHOICES],
+            state="readonly",
+            textvariable=self.motion_direction_label_var,
+            width=14,
+            style="Modern.TCombobox",
+        )
+        self.motion_direction_combo.grid(row=0, column=1, sticky="w", padx=(12, 12))
+        self.motion_direction_combo.bind(
+            "<<ComboboxSelected>>", self._on_motion_direction_change
+        )
         radio_frame = ttk.Frame(motion_controls)
-        radio_frame.grid(row=0, column=1, sticky="e")
+        radio_frame.grid(row=0, column=2, sticky="e")
         self.start_radio = ttk.Radiobutton(
             radio_frame,
             text="Start (Rot)",
@@ -866,8 +892,7 @@ class Application(tk.Tk):
             self.current_image = img.copy()
         manual = self.manual_crops.get(path)
         if manual is None:
-            auto_crop = self._auto_crop_current()
-            manual = self._create_manual_from_auto(auto_crop)
+            manual = self._auto_manual_current()
         else:
             manual = self._normalize_manual(manual)
         self.manual_crops[path] = manual
@@ -875,7 +900,7 @@ class Application(tk.Tk):
         self._set_controls_enabled(True)
         self._update_navigation_state()
 
-    def _auto_crop_current(self) -> CropBox:
+    def _auto_manual_current(self) -> ManualCrop:
         assert self.current_image is not None and self.input_path is not None
         detection_mode = self._current_detection_mode()
         options = ProcessingOptions(
@@ -885,9 +910,15 @@ class Application(tk.Tk):
             face_detection_enabled=detection_mode != "none",
             detection_mode=detection_mode,
             motion_enabled=self.motion_enabled_var.get(),
+            motion_direction=self.motion_direction_var.get(),
         )
         cropper = self._get_preview_cropper()
-        return determine_crop_box(self.current_image, options, cropper)
+        if options.motion_enabled:
+            manual = determine_motion_manual(self.current_image, options, cropper)
+        else:
+            crop = determine_crop_box(self.current_image, options, cropper)
+            manual = ManualCrop(start=crop, end=crop)
+        return self._normalize_manual(manual)
 
     def _scale_crop(self, crop: CropBox, factor: float, width: int, height: int) -> CropBox:
         factor = clamp(factor, 0.01, 10.0)
@@ -901,20 +932,6 @@ class Application(tk.Tk):
         x = clamp(x, min_x, max_x)
         y = clamp(y, min_y, max_y)
         return CropBox(x=x, y=y, size=size)
-
-    def _create_manual_from_auto(self, crop: CropBox) -> ManualCrop:
-        assert self.current_image is not None
-        width, height = self.current_image.size
-        end = self._normalize_crop_box(CropBox(crop.x, crop.y, crop.size), width, height)
-        if self.motion_enabled_var.get():
-            start_size = square_size_for_circle(float(min(width, height)))
-            start_x = (width - start_size) / 2
-            vertical_margin = start_size * self.CIRCLE_MARGIN
-            start_y = (height - start_size) / 2 + vertical_margin
-            start = self._normalize_crop_box(CropBox(start_x, start_y, start_size), width, height)
-        else:
-            start = CropBox(end.x, end.y, end.size)
-        return ManualCrop(start=start, end=end)
 
     def _normalize_crop_box(self, crop: CropBox, width: int, height: int) -> CropBox:
         return normalize_crop_with_overflow(width, height, crop)
@@ -981,8 +998,16 @@ class Application(tk.Tk):
     def _apply_manual_to_controls(self, manual: ManualCrop) -> None:
         self._update_current_manual(manual, sync_controls=True)
 
+    def _update_motion_direction_state(self) -> None:
+        if self.motion_enabled_var.get():
+            state = "readonly"
+        else:
+            state = "disabled"
+        self.motion_direction_combo.configure(state=state)
+
     def _on_motion_toggle(self) -> None:
         enabled = self.motion_enabled_var.get()
+        self._update_motion_direction_state()
         if enabled:
             self.start_radio.state(["!disabled"])
         else:
@@ -1000,8 +1025,9 @@ class Application(tk.Tk):
                 and abs(manual.start.y - manual.end.y) < 1e-3
                 and abs(manual.start.size - manual.end.size) < 1e-3
             ):
-                manual = self._create_manual_from_auto(manual.end)
-                self.manual_crops[self.current_path] = manual
+                auto_manual = self._auto_manual_current()
+                self.manual_crops[self.current_path] = auto_manual
+                manual = auto_manual
         self._apply_manual_to_controls(manual)
         self._refresh_selected_button_state()
         self._refresh_crop_buttons()
@@ -1023,6 +1049,30 @@ class Application(tk.Tk):
         self._refresh_crop_buttons()
         self._refresh_legend_state()
 
+    def _on_motion_direction_change(self, *_args: object) -> None:
+        label = self.motion_direction_label_var.get()
+        value = self._motion_direction_value_by_label.get(label, "in")
+        if value != self.motion_direction_var.get():
+            self.motion_direction_var.set(value)
+        if (
+            self.motion_enabled_var.get()
+            and self.current_path is not None
+            and self.current_path in self.manual_crops
+            and self.current_image is not None
+        ):
+            manual = self.manual_crops[self.current_path]
+            if (
+                abs(manual.start.x - manual.end.x) < 1e-3
+                and abs(manual.start.y - manual.end.y) < 1e-3
+                and abs(manual.start.size - manual.end.size) < 1e-3
+            ):
+                auto_manual = self._auto_manual_current()
+                self.manual_crops[self.current_path] = auto_manual
+                self._apply_manual_to_controls(auto_manual)
+            else:
+                self._refresh_crop_buttons()
+                self._refresh_legend_state()
+
     def _on_slider_change(self, _value: float | str) -> None:
         if self._updating_controls or self.current_image is None or self.current_path is None:
             return
@@ -1041,8 +1091,7 @@ class Application(tk.Tk):
         new_crop = CropBox(x=x, y=y, size=size)
         manual = self.manual_crops.get(self.current_path)
         if manual is None:
-            auto = self._auto_crop_current()
-            manual = self._create_manual_from_auto(auto)
+            manual = self._auto_manual_current()
         start = CropBox(manual.start.x, manual.start.y, manual.start.size)
         end = CropBox(manual.end.x, manual.end.y, manual.end.size)
         if self.motion_enabled_var.get():
@@ -1449,8 +1498,7 @@ class Application(tk.Tk):
     def _reset_crop_to_auto(self) -> None:
         if self.current_image is None or self.current_path is None:
             return
-        crop = self._auto_crop_current()
-        manual = self._create_manual_from_auto(crop)
+        manual = self._auto_manual_current()
         self.manual_crops[self.current_path] = manual
         self._apply_manual_to_controls(manual)
 
@@ -1581,6 +1629,7 @@ class Application(tk.Tk):
             face_detection_enabled=detection_mode != "none",
             detection_mode=detection_mode,
             motion_enabled=self.motion_enabled_var.get(),
+            motion_direction=self.motion_direction_var.get(),
         )
         try:
             logger = setup_environment(options)

@@ -140,6 +140,7 @@ class ProcessingOptions:
     face_detection_enabled: bool = True
     detection_mode: str = "face"
     motion_enabled: bool = True
+    motion_direction: str = "in"
 
 
 class ProgressLogger:
