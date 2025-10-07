@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import math
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -53,13 +54,19 @@ class FaceCropper:
         self,
         min_face: float = 0.1,
         face_priority: str = "largest",
-        smoothing: float = 0.6,
+        smoothing: float = 0.4,
         mode: str = "face",
+        max_tracking_gap: int = 15,
+        max_step_fraction: float = 0.15,
     ) -> None:
         self.mode = mode
         self.min_face = min_face
         self.face_priority = face_priority
         self.smoother = ExponentialSmoother(alpha=smoothing)
+        self.max_tracking_gap = max(0, int(max_tracking_gap))
+        self.max_step_fraction = max(0.0, float(max_step_fraction))
+        self._last_smoothed: Optional[CropBox] = None
+        self._lost_frames = 0
 
         self._use_mediapipe = self.mode == "face" and mp is not None
         self._face_detection: Optional["mp.solutions.face_detection.FaceDetection"] = None
@@ -247,10 +254,31 @@ class FaceCropper:
         window_size = fallback.size
         focus = self.focus_window(detections, width, height, window_size)
         if focus is None:
+            self._lost_frames += 1
+            if self._last_smoothed is not None and self._lost_frames <= self.max_tracking_gap:
+                preserved = CropBox(self._last_smoothed.x, self._last_smoothed.y, window_size)
+                preserved.x = clamp(preserved.x, 0, max(0, width - window_size))
+                preserved.y = clamp(preserved.y, 0, max(0, height - window_size))
+                return preserved
+            self._last_smoothed = None
+            self._lost_frames = 0
             self.smoother.reset()
             return fallback
+
+        self._lost_frames = 0
         smoothed = self.smoother.update(focus)
+
+        if self._last_smoothed is not None and self.max_step_fraction > 0:
+            max_step = window_size * self.max_step_fraction
+            dx = smoothed.x - self._last_smoothed.x
+            dy = smoothed.y - self._last_smoothed.y
+            if abs(dx) > max_step:
+                smoothed.x = self._last_smoothed.x + math.copysign(max_step, dx)
+            if abs(dy) > max_step:
+                smoothed.y = self._last_smoothed.y + math.copysign(max_step, dy)
+
         smoothed.size = window_size
         smoothed.x = clamp(smoothed.x, 0, max(0, width - window_size))
         smoothed.y = clamp(smoothed.y, 0, max(0, height - window_size))
-        return smoothed
+        self._last_smoothed = CropBox(smoothed.x, smoothed.y, smoothed.size)
+        return self._last_smoothed
