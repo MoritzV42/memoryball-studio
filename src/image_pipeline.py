@@ -12,7 +12,14 @@ from PIL import Image, ImageOps
 from pillow_heif import register_heif_opener
 
 from .face_cropper import FaceCropper
-from .utils import CropBox, ManualCrop, ProcessingOptions, clamp, safe_output_path
+from .utils import (
+    CropBox,
+    ManualCrop,
+    ProcessingOptions,
+    clamp,
+    normalize_crop_with_overflow,
+    safe_output_path,
+)
 
 register_heif_opener()
 
@@ -37,11 +44,7 @@ def _center_square(width: int, height: int, pad: float = 0.0) -> CropBox:
 
 
 def _normalize_crop(width: int, height: int, crop_box: CropBox) -> CropBox:
-    size = min(crop_box.size, width, height)
-    size = max(1, size)
-    x = clamp(crop_box.x, 0, max(0, width - size))
-    y = clamp(crop_box.y, 0, max(0, height - size))
-    return CropBox(x=x, y=y, size=size)
+    return normalize_crop_with_overflow(width, height, crop_box)
 
 
 def determine_crop_box(

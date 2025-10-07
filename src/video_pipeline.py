@@ -1,7 +1,6 @@
 """Video processing pipeline."""
 from __future__ import annotations
 
-import math
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,7 +10,13 @@ import cv2
 import numpy as np
 
 from .face_cropper import FaceCropper
-from .utils import CropBox, ProcessingOptions, clamp, run_ffprobe, safe_output_path
+from .utils import (
+    CropBox,
+    ProcessingOptions,
+    normalize_crop_with_overflow,
+    run_ffprobe,
+    safe_output_path,
+)
 
 
 @dataclass(slots=True)
@@ -41,10 +46,33 @@ def _compute_crop(frame: np.ndarray, options: ProcessingOptions, face_cropper: O
         crop = face_cropper.track(frame, width, height, fallback)
     else:
         crop = fallback
-    crop.size = min(crop.size, width, height)
-    crop.x = clamp(crop.x, 0, width - crop.size)
-    crop.y = clamp(crop.y, 0, height - crop.size)
-    return crop
+    return normalize_crop_with_overflow(width, height, crop)
+
+
+def _crop_frame_with_padding(frame: np.ndarray, crop_box: CropBox) -> np.ndarray:
+    """Extract a square crop, padding with black when outside the frame bounds."""
+
+    height, width = frame.shape[:2]
+    x1, y1, x2, y2 = crop_box.as_tuple()
+    size = max(1, max(x2 - x1, y2 - y1))
+    channels = frame.shape[2] if frame.ndim == 3 else 1
+    result = np.zeros((size, size, channels), dtype=frame.dtype)
+
+    src_x1 = max(0, x1)
+    src_y1 = max(0, y1)
+    src_x2 = min(width, x2)
+    src_y2 = min(height, y2)
+
+    if src_x2 <= src_x1 or src_y2 <= src_y1:
+        return result
+
+    dst_x1 = src_x1 - x1
+    dst_y1 = src_y1 - y1
+    dst_x2 = dst_x1 + (src_x2 - src_x1)
+    dst_y2 = dst_y1 + (src_y2 - src_y1)
+
+    result[dst_y1:dst_y2, dst_x1:dst_x2] = frame[src_y1:src_y2, src_x1:src_x2]
+    return result
 
 
 def _iter_frames(cap: cv2.VideoCapture) -> Iterator[np.ndarray]:
@@ -125,8 +153,7 @@ def process_video(path: Path, options: ProcessingOptions, face_cropper: Optional
 
     for frame in _iter_frames(cap):
         crop_box = _compute_crop(frame, options, face_cropper, fallback)
-        x1, y1, x2, y2 = crop_box.as_tuple()
-        cropped = frame[y1:y2, x1:x2]
+        cropped = _crop_frame_with_padding(frame, crop_box)
         resized = cv2.resize(cropped, (options.size, options.size), interpolation=cv2.INTER_LANCZOS4)
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         proc.stdin.write(rgb.tobytes())

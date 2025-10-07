@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import subprocess
 import sys
@@ -26,7 +27,47 @@ class CropBox:
     size: float
 
     def as_tuple(self) -> Tuple[int, int, int, int]:
-        return int(self.x), int(self.y), int(self.x + self.size), int(self.y + self.size)
+        left = math.floor(self.x)
+        top = math.floor(self.y)
+        right = math.ceil(self.x + self.size)
+        bottom = math.ceil(self.y + self.size)
+        return left, top, right, bottom
+
+
+CROP_OVERFLOW_RATIO = 0.5
+
+
+def crop_position_bounds(size: float, dimension: int, overflow_ratio: float = CROP_OVERFLOW_RATIO) -> Tuple[float, float]:
+    """Return the allowed coordinate range for a crop side with optional overflow."""
+
+    overflow = size * overflow_ratio
+    minimum = -overflow
+    maximum = dimension - size + overflow
+    if maximum < minimum:
+        maximum = minimum
+    return minimum, maximum
+
+
+def max_crop_size(width: int, height: int) -> float:
+    """Return the maximum allowed crop size for a frame."""
+
+    return float(max(width, height))
+
+
+def normalize_crop_with_overflow(
+    width: int,
+    height: int,
+    crop_box: CropBox,
+    overflow_ratio: float = CROP_OVERFLOW_RATIO,
+) -> CropBox:
+    """Clamp a crop box while allowing configurable overflow beyond the image bounds."""
+
+    size = clamp(crop_box.size, 1.0, max_crop_size(width, height))
+    min_x, max_x = crop_position_bounds(size, width, overflow_ratio)
+    min_y, max_y = crop_position_bounds(size, height, overflow_ratio)
+    x = clamp(crop_box.x, min_x, max_x)
+    y = clamp(crop_box.y, min_y, max_y)
+    return CropBox(x=x, y=y, size=size)
 
 
 @dataclass(slots=True)

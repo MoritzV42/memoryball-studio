@@ -21,10 +21,13 @@ from .utils import (
     ManualCrop,
     ProcessingOptions,
     clamp,
+    crop_position_bounds,
     ensure_dir,
     iter_media_files,
     is_image,
     is_video,
+    max_crop_size,
+    normalize_crop_with_overflow,
     setup_environment,
 )
 from .video_pipeline import process_video
@@ -34,6 +37,7 @@ class Application(tk.Tk):
     """Tkinter-Anwendung mit Vorschau und manueller Zuschnittssteuerung."""
 
     CANVAS_SIZE = 520
+    CIRCLE_MARGIN = 0.1
     DETECTION_CHOICES = [
         ("face", "Gesichtserkennung"),
         ("person", "Menscherkennung"),
@@ -61,6 +65,8 @@ class Application(tk.Tk):
         self.output_media_files: list[Path] = []
         self._legend_items: dict[str, dict[str, object]] = {}
         self._legend_colors = {"start": "#ff5555", "end": "#00ff88"}
+        self._crop_buttons: dict[str, ttk.Button] = {}
+        self._crop_buttons_enabled = True
         self._tutorial_window: Optional[tk.Toplevel] = None
         self._tutorial_steps: list[dict[str, object]] = []
         self._tutorial_index = -1
@@ -275,6 +281,26 @@ class Application(tk.Tk):
         preview.columnconfigure(0, weight=1)
 
         ttk.Label(preview, text="Vorschau", style="Heading.TLabel").grid(row=0, column=0, sticky="w")
+        button_frame = ttk.Frame(preview)
+        button_frame.grid(row=1, column=0, sticky="w", pady=(8, 0))
+        self._crop_buttons = {
+            "start": ttk.Button(
+                button_frame,
+                text="1",
+                width=4,
+                command=lambda: self._select_crop("start"),
+            ),
+            "end": ttk.Button(
+                button_frame,
+                text="2",
+                width=4,
+                command=lambda: self._select_crop("end"),
+            ),
+        }
+        self._crop_buttons["start"].grid(row=0, column=0, padx=(0, 8))
+        self._crop_buttons["end"].grid(row=0, column=1)
+        self._refresh_crop_buttons()
+
         self.canvas = tk.Canvas(
             preview,
             width=self.CANVAS_SIZE,
@@ -283,18 +309,18 @@ class Application(tk.Tk):
             highlightthickness=0,
             bd=0,
         )
-        self.canvas.grid(row=1, column=0, sticky="n", pady=(12, 16))
+        self.canvas.grid(row=2, column=0, sticky="n", pady=(12, 16))
         self.canvas.bind("<ButtonPress-1>", self._on_canvas_press)
         self.canvas.bind("<B1-Motion>", self._on_canvas_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
 
         legend = ttk.Frame(preview, style="Card.TFrame")
-        legend.grid(row=2, column=0, sticky="w", pady=(0, 12))
+        legend.grid(row=3, column=0, sticky="w", pady=(0, 12))
         self.legend_frame = legend
         self._build_legend(legend)
 
         nav = ttk.Frame(preview)
-        nav.grid(row=3, column=0, sticky="ew", pady=(0, 12))
+        nav.grid(row=4, column=0, sticky="ew", pady=(0, 12))
         nav.columnconfigure(1, weight=1)
         self.prev_button = ttk.Button(nav, text="◀", width=4, command=self._show_previous_image)
         self.prev_button.grid(row=0, column=0, sticky="w")
@@ -303,7 +329,7 @@ class Application(tk.Tk):
         self.next_button.grid(row=0, column=2, sticky="e")
 
         motion_controls = ttk.Frame(preview)
-        motion_controls.grid(row=4, column=0, sticky="ew", pady=(0, 8))
+        motion_controls.grid(row=5, column=0, sticky="ew", pady=(0, 8))
         motion_controls.columnconfigure(1, weight=1)
         ttk.Checkbutton(
             motion_controls,
@@ -329,7 +355,7 @@ class Application(tk.Tk):
         self.end_radio.grid(row=0, column=1)
 
         sliders = ttk.Frame(preview)
-        sliders.grid(row=5, column=0, sticky="ew")
+        sliders.grid(row=6, column=0, sticky="ew")
         sliders.columnconfigure(1, weight=1)
         sliders.columnconfigure(3, weight=1)
 
@@ -354,7 +380,7 @@ class Application(tk.Tk):
         )
 
         ttk.Label(preview, textvariable=self.crop_info_var, style="Section.TLabel").grid(
-            row=6,
+            row=7,
             column=0,
             sticky="w",
             pady=(12, 0),
@@ -465,6 +491,23 @@ class Application(tk.Tk):
                 number_label.configure(bg=self._card_background, fg="#4c5267", relief="solid", cursor="")
                 text_label.configure(foreground="#5a6176", cursor="")
 
+    def _refresh_crop_buttons(self) -> None:
+        if not self._crop_buttons:
+            return
+        if not self._crop_buttons_enabled:
+            for button in self._crop_buttons.values():
+                button.state(["disabled"])
+                button.configure(style="TButton")
+            return
+        for key, button in self._crop_buttons.items():
+            if key == "start" and not self.motion_enabled_var.get():
+                button.state(["disabled"])
+                button.configure(style="TButton")
+                continue
+            button.state(["!disabled"])
+            style = "Accent.TButton" if self.active_crop_var.get() == key else "TButton"
+            button.configure(style=style)
+
     def _select_crop(self, target: str) -> None:
         if target == "start" and not self.motion_enabled_var.get():
             return
@@ -473,6 +516,7 @@ class Application(tk.Tk):
         else:
             self._on_active_crop_change()
             self._refresh_legend_state()
+        self._refresh_crop_buttons()
 
     def _tutorial_state_path(self, ensure: bool = False) -> Path:
         base = Path.home() / ".memoryball-studio"
@@ -666,6 +710,7 @@ class Application(tk.Tk):
                 scale.state(["disabled"])
         self.prev_button.state(["!disabled"] if enabled else ["disabled"])
         self.next_button.state(["!disabled"] if enabled else ["disabled"])
+        self._crop_buttons_enabled = enabled
         if enabled:
             if self.motion_enabled_var.get():
                 self.start_radio.state(["!disabled"])
@@ -677,6 +722,7 @@ class Application(tk.Tk):
             self.start_radio.state(["disabled"])
             self.end_radio.state(["disabled"])
             self.convert_selected_button.state(["disabled"])
+        self._refresh_crop_buttons()
         self._refresh_legend_state()
         self.listbox.configure(state="normal")
 
@@ -843,38 +889,32 @@ class Application(tk.Tk):
 
     def _scale_crop(self, crop: CropBox, factor: float, width: int, height: int) -> CropBox:
         factor = clamp(factor, 0.01, 10.0)
-        size = clamp(crop.size * factor, 1.0, float(min(width, height)))
+        size = clamp(crop.size * factor, 1.0, max_crop_size(width, height))
         center_x = crop.x + crop.size / 2
         center_y = crop.y + crop.size / 2
-        max_x = max(0.0, width - size)
-        max_y = max(0.0, height - size)
-        x = clamp(center_x - size / 2, 0.0, max_x)
-        y = clamp(center_y - size / 2, 0.0, max_y)
+        x = center_x - size / 2
+        y = center_y - size / 2
+        min_x, max_x = crop_position_bounds(size, width)
+        min_y, max_y = crop_position_bounds(size, height)
+        x = clamp(x, min_x, max_x)
+        y = clamp(y, min_y, max_y)
         return CropBox(x=x, y=y, size=size)
 
     def _create_manual_from_auto(self, crop: CropBox) -> ManualCrop:
         assert self.current_image is not None
         width, height = self.current_image.size
-        end = CropBox(crop.x, crop.y, crop.size)
-        has_margin = (
-            crop.x > 1.0
-            and crop.y > 1.0
-            and crop.x + crop.size < width - 1.0
-            and crop.y + crop.size < height - 1.0
-        )
-        if self.motion_enabled_var.get() and has_margin:
-            start = self._scale_crop(end, 0.9, width, height)
+        end = self._normalize_crop_box(CropBox(crop.x, crop.y, crop.size), width, height)
+        if self.motion_enabled_var.get():
+            start_size = end.size
+            start_x = (width - start_size) / 2
+            start_y = (height - start_size) / 2
+            start = self._normalize_crop_box(CropBox(start_x, start_y, start_size), width, height)
         else:
             start = CropBox(end.x, end.y, end.size)
         return ManualCrop(start=start, end=end)
 
     def _normalize_crop_box(self, crop: CropBox, width: int, height: int) -> CropBox:
-        size = clamp(crop.size, 1.0, float(min(width, height)))
-        max_x = max(0.0, width - size)
-        max_y = max(0.0, height - size)
-        x = clamp(crop.x, 0.0, max_x)
-        y = clamp(crop.y, 0.0, max_y)
-        return CropBox(x=x, y=y, size=size)
+        return normalize_crop_with_overflow(width, height, crop)
 
     def _normalize_manual(self, manual: ManualCrop) -> ManualCrop:
         assert self.current_image is not None
@@ -893,12 +933,14 @@ class Application(tk.Tk):
             return
         crop = self._active_manual_crop(manual)
         width, height = self.current_image.size
-        min_side = max(1, min(width, height))
-        size_ratio = clamp(crop.size / min_side, 0.01, 1.0)
-        max_x = max(width - crop.size, 1e-9)
-        max_y = max(height - crop.size, 1e-9)
-        offset_x = clamp(crop.x / max_x if max_x else 0.0, 0.0, 1.0)
-        offset_y = clamp(crop.y / max_y if max_y else 0.0, 0.0, 1.0)
+        max_side = max(1, max(width, height))
+        size_ratio = clamp(crop.size / max_side, 0.01, 1.0)
+        min_x, max_x = crop_position_bounds(crop.size, width)
+        min_y, max_y = crop_position_bounds(crop.size, height)
+        range_x = max_x - min_x
+        range_y = max_y - min_y
+        offset_x = clamp((crop.x - min_x) / range_x if range_x else 0.0, 0.0, 1.0)
+        offset_y = clamp((crop.y - min_y) / range_y if range_y else 0.0, 0.0, 1.0)
         self._updating_controls = True
         self.size_ratio.set(size_ratio)
         self.offset_x.set(offset_x)
@@ -944,6 +986,7 @@ class Application(tk.Tk):
             self.start_radio.state(["disabled"])
             if self.active_crop_var.get() == "start":
                 self.active_crop_var.set("end")
+        self._refresh_crop_buttons()
         if self.current_path is None or self.current_path not in self.manual_crops or self.current_image is None:
             self._refresh_selected_button_state()
             return
@@ -958,32 +1001,40 @@ class Application(tk.Tk):
                 self.manual_crops[self.current_path] = manual
         self._apply_manual_to_controls(manual)
         self._refresh_selected_button_state()
+        self._refresh_crop_buttons()
         self._refresh_legend_state()
 
     def _on_active_crop_change(self, *_args: object) -> None:
         if not self.motion_enabled_var.get():
             if self.active_crop_var.get() != "end":
                 self.active_crop_var.set("end")
+            self._refresh_crop_buttons()
             return
         if self.current_path is None or self.current_path not in self.manual_crops:
+            self._refresh_crop_buttons()
             self._refresh_legend_state()
             return
         manual = self.manual_crops[self.current_path]
         self._sync_sliders_with_active(manual)
         self._render_preview(manual)
+        self._refresh_crop_buttons()
         self._refresh_legend_state()
 
     def _on_slider_change(self, _value: float | str) -> None:
         if self._updating_controls or self.current_image is None or self.current_path is None:
             return
         width, height = self.current_image.size
-        min_side = max(1, min(width, height))
+        max_side = max(1, max(width, height))
         ratio = clamp(self.size_ratio.get(), 0.01, 1.0)
-        size = ratio * min_side
-        max_x = max(0.0, width - size)
-        max_y = max(0.0, height - size)
-        x = clamp(self.offset_x.get(), 0.0, 1.0) * max_x
-        y = clamp(self.offset_y.get(), 0.0, 1.0) * max_y
+        size = ratio * max_side
+        min_x, max_x = crop_position_bounds(size, width)
+        min_y, max_y = crop_position_bounds(size, height)
+        norm_x = clamp(self.offset_x.get(), 0.0, 1.0)
+        norm_y = clamp(self.offset_y.get(), 0.0, 1.0)
+        range_x = max_x - min_x
+        range_y = max_y - min_y
+        x = min_x + norm_x * range_x if range_x else min_x
+        y = min_y + norm_y * range_y if range_y else min_y
         new_crop = CropBox(x=x, y=y, size=size)
         manual = self.manual_crops.get(self.current_path)
         if manual is None:
@@ -1039,6 +1090,23 @@ class Application(tk.Tk):
                 tags=("handle",),
             )
 
+    def _draw_orientation_circle(
+        self, rect: tuple[float, float, float, float], color: str, line_width: int
+    ) -> None:
+        x1, y1, x2, y2 = rect
+        diameter = min(x2 - x1, y2 - y1)
+        if diameter <= 0:
+            return
+        margin = diameter * self.CIRCLE_MARGIN
+        self.canvas.create_oval(
+            x1 + margin,
+            y1 + margin,
+            x2 - margin,
+            y2 - margin,
+            outline=color,
+            width=line_width,
+        )
+
     def _render_preview(self, manual: ManualCrop) -> None:
         if self.current_image is None:
             return
@@ -1080,12 +1148,23 @@ class Application(tk.Tk):
             end_rect = self._canvas_rect(manual.end)
             self._manual_display["start"] = start_rect
             self._manual_display["end"] = end_rect
-            self.canvas.create_rectangle(*start_rect, outline="#ff5555", width=2)
-            self.canvas.create_rectangle(*end_rect, outline="#00ff88", width=3 if active_target == "end" else 2)
+            start_active = active_target == "start"
+            end_active = active_target == "end"
+            self.canvas.create_rectangle(
+                *start_rect,
+                outline="#ff5555",
+                width=3 if start_active else 2,
+            )
+            self._draw_orientation_circle(start_rect, "#ff5555", 3 if start_active else 2)
+            self.canvas.create_rectangle(
+                *end_rect,
+                outline="#00ff88",
+                width=3 if end_active else 2,
+            )
+            self._draw_orientation_circle(end_rect, "#00ff88", 3 if end_active else 2)
             draw_label(start_rect, "start", "1")
             draw_label(end_rect, "end", "2")
-            if active_target == "start":
-                self.canvas.create_rectangle(*start_rect, outline="#ff5555", width=3)
+            if start_active:
                 self._draw_handles(start_rect, "#ff5555")
             else:
                 self._draw_handles(end_rect, "#00ff88")
@@ -1093,6 +1172,7 @@ class Application(tk.Tk):
             end_rect = self._canvas_rect(manual.end)
             self._manual_display["end"] = end_rect
             self.canvas.create_rectangle(*end_rect, outline="#00ff88", width=3)
+            self._draw_orientation_circle(end_rect, "#00ff88", 3)
             self._draw_handles(end_rect, "#00ff88")
             draw_label(end_rect, "end", "2")
 
@@ -1102,6 +1182,7 @@ class Application(tk.Tk):
         self._update_crop_info(manual)
         has_prev, has_next = self._navigation_flags()
         self._update_canvas_navigation(has_prev, has_next)
+        self._refresh_crop_buttons()
         self._refresh_legend_state()
 
     def _show_placeholder(self, message: str) -> None:
