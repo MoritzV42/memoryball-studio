@@ -11,7 +11,7 @@ from PIL import Image, ImageOps
 from pillow_heif import register_heif_opener
 
 from .face_cropper import FaceCropper
-from .utils import CropBox, ProcessingOptions, clamp, safe_output_path
+from .utils import CropBox, ManualCrop, ProcessingOptions, clamp, safe_output_path
 
 register_heif_opener()
 
@@ -63,12 +63,6 @@ def determine_crop_box(
     else:
         crop_box = base_crop
     return _normalize_crop(width, height, crop_box)
-
-
-def _apply_crop(img: Image.Image, crop: CropBox) -> Image.Image:
-    return img.crop(crop.as_tuple())
-
-
 def _preferred_fps(options: ProcessingOptions) -> float:
     if options.fps == "keep":
         return DEFAULT_IMAGE_FPS
@@ -79,35 +73,37 @@ def _preferred_fps(options: ProcessingOptions) -> float:
     return max(1.0, fps)
 
 
+def _interpolate_crop(start: CropBox, end: CropBox, fraction: float) -> CropBox:
+    fraction = clamp(fraction, 0.0, 1.0)
+    x = start.x + (end.x - start.x) * fraction
+    y = start.y + (end.y - start.y) * fraction
+    size = start.size + (end.size - start.size) * fraction
+    return CropBox(x=x, y=y, size=size)
+
+
 def _iter_motion_frames(
-    base: Image.Image,
+    image: Image.Image,
+    start: CropBox,
+    end: CropBox,
     target: int,
-    _path: Path,
     fps: float,
     duration: float,
+    motion_enabled: bool,
 ) -> Iterable[np.ndarray]:
-    """Yield frames for an image clip without artificial zooming or panning.
-
-    Historically the generator attempted to create motion by zooming into the
-    cropped image. In practice this resulted in extreme close-ups when working
-    with high-resolution photos, because only a very small portion of the image
-    ended up in the 480x480 output. To match the expected behaviour—crop to a
-    square and simply scale it down—we now keep the full crop for every frame.
-
-    The ``_path`` argument remains for backwards compatibility with older
-    callers but is intentionally unused.
-    """
-
     frames = max(1, int(round(duration * fps)))
-    base_rgb = base.convert("RGB")
-    resized = base_rgb.resize((target, target), Image.Resampling.LANCZOS)
-    frame_array = np.array(resized)
-    frame_bgr = cv2.cvtColor(frame_array, cv2.COLOR_RGB2BGR)
+    rgb_image = image.convert("RGB")
 
-    for _index in range(frames):
-        # ``VideoWriter`` expects a new array for each frame. ``copy`` ensures
-        # downstream consumers cannot accidentally mutate the shared buffer.
-        yield frame_bgr.copy()
+    for index in range(frames):
+        if motion_enabled and frames > 1:
+            fraction = index / (frames - 1)
+        else:
+            fraction = 0.0
+        crop = _interpolate_crop(start, end, fraction)
+        cropped = rgb_image.crop(crop.as_tuple())
+        resized = cropped.resize((target, target), Image.Resampling.LANCZOS)
+        frame_array = np.array(resized)
+        frame_bgr = cv2.cvtColor(frame_array, cv2.COLOR_RGB2BGR)
+        yield frame_bgr
 
 
 def _write_video(frames: Iterable[np.ndarray], path: Path, fps: float, size: int) -> None:
@@ -126,7 +122,7 @@ def process_image(
     path: Path,
     options: ProcessingOptions,
     face_cropper: Optional[FaceCropper],
-    manual_crop: Optional[CropBox] = None,
+    manual_crop: Optional[ManualCrop] = None,
 ) -> ImageResult:
     output_path = safe_output_path(options.output_dir, path, options.size, options.image_format, options.video_ext)
     video_suffix = f".{options.video_ext.lower()}"
@@ -141,14 +137,26 @@ def process_image(
         width, height = img.size
 
         if manual_crop is not None:
-            crop_box = _normalize_crop(width, height, manual_crop)
+            start_crop = _normalize_crop(width, height, manual_crop.start)
+            end_crop = _normalize_crop(width, height, manual_crop.end)
         else:
-            crop_box = determine_crop_box(img, options, face_cropper)
+            auto_crop = determine_crop_box(img, options, face_cropper)
+            start_crop = _normalize_crop(width, height, auto_crop)
+            end_crop = start_crop
 
-        cropped = _apply_crop(img, crop_box)
+        if not options.motion_enabled:
+            start_crop = CropBox(end_crop.x, end_crop.y, end_crop.size)
 
     fps = _preferred_fps(options)
-    frames = _iter_motion_frames(cropped, options.size, path, fps, IMAGE_CLIP_DURATION)
+    frames = _iter_motion_frames(
+        img,
+        start_crop,
+        end_crop,
+        options.size,
+        fps,
+        IMAGE_CLIP_DURATION,
+        options.motion_enabled,
+    )
     _write_video(frames, output_path, fps, options.size)
     return ImageResult(source=path, target=output_path, processed=True)
 

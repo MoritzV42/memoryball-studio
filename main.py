@@ -16,7 +16,7 @@ from src.face_cropper import FaceCropper
 from src.image_pipeline import process_image
 from src.video_pipeline import process_video
 from src.utils import (
-    CropBox,
+    ManualCrop,
     ProcessingOptions,
     iter_media_files,
     is_image,
@@ -105,7 +105,7 @@ def _process_images(
     images: List[Path],
     options: ProcessingOptions,
     logger: logging.Logger,
-    manual_overrides: dict[Path, CropBox] | None = None,
+    manual_overrides: dict[Path, ManualCrop] | None = None,
 ) -> None:
     if not images:
         return
