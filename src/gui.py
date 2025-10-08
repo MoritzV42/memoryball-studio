@@ -94,6 +94,8 @@ class Application(tk.Tk):
         self._advanced_toggle: Optional[ttk.Button] = None
         self.advanced_frame: Optional[ttk.Frame] = None
         self._compact_control_buttons: list[ttk.Button] = []
+        self.crop_button_frame: Optional[ttk.Frame] = None
+        self.legend_frame: Optional[tk.Widget] = None
         self._loading_overlay: Optional[tk.Frame] = None
         self._loading_spinner: Optional[ttk.Progressbar] = None
         self._loading_message_var = tk.StringVar(value="")
@@ -331,8 +333,6 @@ class Application(tk.Tk):
         io_card.columnconfigure(1, weight=1)
         io_card.columnconfigure(4, weight=1)
 
-        ttk.Label(io_card, text="Ordner", style="Heading.TLabel").grid(row=0, column=0, columnspan=6, sticky="w")
-
         ttk.Label(io_card, text="Eingabeordner", style="Section.TLabel").grid(
             row=1, column=0, sticky="w", pady=(12, 0)
         )
@@ -362,20 +362,6 @@ class Application(tk.Tk):
         ttk.Button(io_card, text="Wählen…", command=self._choose_output).grid(
             row=1, column=5, sticky="ew", pady=(12, 0)
         )
-
-        options = ttk.Frame(io_card)
-        options.grid(row=2, column=0, columnspan=6, sticky="ew", pady=(16, 0))
-        options.columnconfigure(1, weight=1)
-        ttk.Label(options, text="Zielgröße", style="Section.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Spinbox(
-            options,
-            from_=256,
-            to=1080,
-            increment=16,
-            textvariable=self.size_var,
-            width=7,
-            style="Modern.TSpinbox",
-        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
 
         list_frame = ttk.Frame(main, style="Card.TFrame", padding=20)
         list_frame.grid(row=2, column=0, sticky="nswe")
@@ -414,18 +400,20 @@ class Application(tk.Tk):
 
         button_frame = ttk.Frame(controls_column)
         button_frame.grid(row=0, column=0, sticky="w")
+        self.crop_button_frame = button_frame
+        self.legend_frame = button_frame
         self._crop_buttons = {
             "start": ttk.Button(
                 button_frame,
-                text="1",
-                width=3,
+                text="Start",
+                width=8,
                 style="Start.TButton",
                 command=lambda: self._select_crop("start"),
             ),
             "end": ttk.Button(
                 button_frame,
-                text="2",
-                width=3,
+                text="Ende",
+                width=8,
                 style="End.TButton",
                 command=lambda: self._select_crop("end"),
             ),
@@ -439,7 +427,6 @@ class Application(tk.Tk):
         compact_controls = ttk.Frame(controls_column)
         compact_controls.grid(row=1, column=0, sticky="w", pady=(12, 0))
         compact_controls.columnconfigure(0, weight=0)
-        compact_controls.columnconfigure(1, weight=0)
 
         dpad = ttk.Frame(compact_controls)
         dpad.grid(row=0, column=0, sticky="w")
@@ -464,45 +451,45 @@ class Application(tk.Tk):
         auto_button.grid(row=1, column=0, sticky="w", pady=(8, 0))
         self._compact_control_buttons.append(auto_button)
 
-        zoom_frame = ttk.Frame(compact_controls)
-        zoom_frame.grid(row=0, column=1, rowspan=2, sticky="nw", padx=(12, 0))
-        ttk.Label(zoom_frame, text="Zoom", style="Body.TLabel").grid(
-            row=0, column=0, sticky="w", pady=(0, 4)
+        nav = ttk.Frame(controls_column)
+        nav.grid(row=2, column=0, sticky="w", pady=(16, 0))
+        nav.columnconfigure(1, weight=0)
+        nav.rowconfigure(0, weight=0)
+        nav.rowconfigure(1, weight=0)
+        nav.rowconfigure(2, weight=0)
+        self.prev_button = ttk.Button(
+            nav, text="◀", width=3, command=self._show_previous_image, style="Nav.TButton"
         )
+        self.prev_button.grid(row=1, column=0, sticky="w")
+        ttk.Label(nav, textvariable=self.position_var, style="Section.TLabel").grid(
+            row=1, column=1, padx=(8, 12), sticky="w"
+        )
+        next_stack = ttk.Frame(nav)
+        next_stack.grid(row=0, column=2, rowspan=3, sticky="nw", padx=(12, 0))
         zoom_in = ttk.Button(
-            zoom_frame,
+            next_stack,
             text="+",
             width=3,
             command=lambda: self._adjust_zoom(self.ZOOM_STEP),
         )
-        zoom_in.grid(row=1, column=0, sticky="ew")
+        zoom_in.grid(row=0, column=0, sticky="ew")
+        self._compact_control_buttons.append(zoom_in)
+        self.next_button = ttk.Button(
+            next_stack, text="▶", width=3, command=self._show_next_image, style="Nav.TButton"
+        )
+        self.next_button.grid(row=1, column=0, sticky="ew", pady=(6, 6))
         zoom_out = ttk.Button(
-            zoom_frame,
+            next_stack,
             text="−",
             width=3,
             command=lambda: self._adjust_zoom(-self.ZOOM_STEP),
         )
-        zoom_out.grid(row=2, column=0, sticky="ew", pady=(6, 0))
-        self._compact_control_buttons.extend([zoom_in, zoom_out])
-
-        nav = ttk.Frame(controls_column)
-        nav.grid(row=2, column=0, sticky="w", pady=(16, 0))
-        nav.columnconfigure(1, weight=0)
-        self.prev_button = ttk.Button(
-            nav, text="◀", width=3, command=self._show_previous_image, style="Nav.TButton"
-        )
-        self.prev_button.grid(row=0, column=0, sticky="w")
-        ttk.Label(nav, textvariable=self.position_var, style="Section.TLabel").grid(
-            row=0, column=1, padx=(8, 8), sticky="w"
-        )
-        self.next_button = ttk.Button(
-            nav, text="▶", width=3, command=self._show_next_image, style="Nav.TButton"
-        )
-        self.next_button.grid(row=0, column=2, sticky="w")
+        zoom_out.grid(row=2, column=0, sticky="ew")
+        self._compact_control_buttons.append(zoom_out)
 
         motion_controls = ttk.Frame(controls_column)
         motion_controls.grid(row=3, column=0, sticky="w", pady=(12, 0))
-        motion_controls.columnconfigure(0, weight=0)
+        motion_controls.columnconfigure(0, weight=1)
         motion_controls.columnconfigure(1, weight=0)
         ttk.Checkbutton(
             motion_controls,
@@ -518,26 +505,22 @@ class Application(tk.Tk):
             width=14,
             style="Modern.TCombobox",
         )
-        self.motion_direction_combo.grid(row=0, column=1, sticky="w", padx=(12, 12))
+        self.motion_direction_combo.grid(row=1, column=0, sticky="w", pady=(8, 0))
         self.motion_direction_combo.bind(
             "<<ComboboxSelected>>", self._on_motion_direction_change
         )
-        radio_frame = ttk.Frame(motion_controls)
-        radio_frame.grid(row=0, column=2, sticky="w")
-        self.start_radio = ttk.Radiobutton(
-            radio_frame,
-            text="Start (Rot)",
-            value="start",
-            variable=self.active_crop_var,
-        )
-        self.start_radio.grid(row=0, column=0, padx=(0, 12))
-        self.end_radio = ttk.Radiobutton(
-            radio_frame,
-            text="Ende (Grün)",
-            value="end",
-            variable=self.active_crop_var,
-        )
-        self.end_radio.grid(row=0, column=1)
+        size_frame = ttk.Frame(motion_controls)
+        size_frame.grid(row=2, column=0, sticky="w", pady=(12, 0))
+        ttk.Label(size_frame, text="Zielgröße", style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Spinbox(
+            size_frame,
+            from_=256,
+            to=1080,
+            increment=16,
+            textvariable=self.size_var,
+            width=7,
+            style="Modern.TSpinbox",
+        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
 
         self._advanced_toggle = ttk.Button(
             controls_column,
@@ -605,11 +588,6 @@ class Application(tk.Tk):
         self.canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
 
         self._create_loading_overlay(preview)
-
-        legend = ttk.Frame(preview, style="Card.TFrame")
-        legend.grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 12))
-        self.legend_frame = legend
-        self._build_legend(legend)
         output = ttk.Frame(main, style="Card.TFrame", padding=20)
         output.grid(row=2, column=2, sticky="nsw", padx=(16, 0))
         output.columnconfigure(0, weight=1)
@@ -892,10 +870,10 @@ class Application(tk.Tk):
                 "placement": "left",
             },
             {
-                "widget": self.legend_frame,
-                "title": "Legende nutzen",
-                "message": "👉 Die rote 1 markiert den Start, die grüne 2 das Ende. Ein Klick auf die Zahl wählt das Feld auch bei Überlappung aus.",
-                "placement": "below",
+                "widget": self.crop_button_frame if self.crop_button_frame is not None else self,
+                "title": "Start- und Endpunkte wählen",
+                "message": "👉 Mit diesen beiden Schaltflächen wechselst du zwischen Start (Rot) und Ende (Grün) der Bewegung.",
+                "placement": "right",
             },
             {
                 "widget": self.convert_button,
@@ -1031,15 +1009,8 @@ class Application(tk.Tk):
         self.next_button.state(["!disabled"] if enabled else ["disabled"])
         self._crop_buttons_enabled = enabled
         if enabled:
-            if self.motion_enabled_var.get():
-                self.start_radio.state(["!disabled"])
-            else:
-                self.start_radio.state(["disabled"])
-            self.end_radio.state(["!disabled"])
             self._refresh_selected_button_state()
         else:
-            self.start_radio.state(["disabled"])
-            self.end_radio.state(["disabled"])
             self.convert_selected_button.state(["disabled"])
         self._refresh_crop_buttons()
         self._refresh_legend_state()
@@ -1455,12 +1426,8 @@ class Application(tk.Tk):
     def _on_motion_toggle(self) -> None:
         enabled = self.motion_enabled_var.get()
         self._update_motion_direction_state()
-        if enabled:
-            self.start_radio.state(["!disabled"])
-        else:
-            self.start_radio.state(["disabled"])
-            if self.active_crop_var.get() == "start":
-                self.active_crop_var.set("end")
+        if not enabled and self.active_crop_var.get() == "start":
+            self.active_crop_var.set("end")
         self._refresh_crop_buttons()
         if self.current_path is None or self.current_path not in self.manual_crops or self.current_image is None:
             self._refresh_selected_button_state()
