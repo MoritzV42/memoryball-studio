@@ -30,7 +30,6 @@ from .utils import (
     ManualCrop,
     ProcessingOptions,
     ORIENTATION_CIRCLE_MARGIN,
-    CROP_OVERFLOW_RATIO,
     clamp,
     crop_position_bounds,
     ensure_dir,
@@ -49,6 +48,7 @@ class Application(tk.Tk):
 
     CANVAS_SIZE = 520
     CIRCLE_MARGIN = ORIENTATION_CIRCLE_MARGIN
+    PREVIEW_OVERFLOW_RATIO = 0.05
     MOTION_DIRECTION_CHOICES = [
         ("in", "Reinzoomen"),
         ("out", "Rauszoomen"),
@@ -82,7 +82,9 @@ class Application(tk.Tk):
         self._updating_controls = False
         self.output_media_files: list[Path] = []
         self._legend_items: dict[str, dict[str, object]] = {}
-        self._legend_colors = {"start": self._danger_color, "end": self._success_color}
+        self._start_color = "#00ff88"
+        self._end_color = "#ff5555"
+        self._legend_colors = {"start": self._start_color, "end": self._end_color}
         self._crop_buttons: dict[str, ttk.Button] = {}
         self._crop_buttons_enabled = True
         self._tutorial_window: Optional[tk.Toplevel] = None
@@ -533,15 +535,16 @@ class Application(tk.Tk):
         self.advanced_frame.grid(row=5, column=0, sticky="ew")
 
         sliders = ttk.Frame(self.advanced_frame)
-        sliders.grid(row=0, column=0, sticky="ew")
-        sliders.columnconfigure(1, weight=1)
-        sliders.columnconfigure(3, weight=1)
+        sliders.grid(row=0, column=0, sticky="w")
+        sliders.columnconfigure(1, weight=0)
+        slider_length = 180
 
         ttk.Label(sliders, text="Zoom", style="Body.TLabel").grid(row=0, column=0, sticky="w")
         self.size_scale = ttk.Scale(
             sliders, from_=0.25, to=1.0, variable=self.size_ratio, command=self._on_slider_change
         )
-        self.size_scale.grid(row=0, column=1, sticky="ew", padx=(6, 6))
+        self.size_scale.configure(length=slider_length)
+        self.size_scale.grid(row=0, column=1, sticky="w", padx=(6, 6))
 
         ttk.Label(sliders, text="X-Position", style="Body.TLabel").grid(
             row=1, column=0, sticky="w", pady=(6, 0)
@@ -549,7 +552,8 @@ class Application(tk.Tk):
         self.x_scale = ttk.Scale(
             sliders, from_=0.0, to=1.0, variable=self.offset_x, command=self._on_slider_change
         )
-        self.x_scale.grid(row=1, column=1, sticky="ew", padx=(6, 6), pady=(6, 0))
+        self.x_scale.configure(length=slider_length)
+        self.x_scale.grid(row=1, column=1, sticky="w", padx=(6, 6), pady=(6, 0))
 
         ttk.Label(sliders, text="Y-Position", style="Body.TLabel").grid(
             row=2, column=0, sticky="w", pady=(6, 0)
@@ -557,7 +561,8 @@ class Application(tk.Tk):
         self.y_scale = ttk.Scale(
             sliders, from_=0.0, to=1.0, variable=self.offset_y, command=self._on_slider_change
         )
-        self.y_scale.grid(row=2, column=1, sticky="ew", padx=(6, 6), pady=(6, 0))
+        self.y_scale.configure(length=slider_length)
+        self.y_scale.grid(row=2, column=1, sticky="w", padx=(6, 6), pady=(6, 0))
 
         ttk.Button(sliders, text="Auto", command=self._reset_crop_to_auto).grid(
             row=0,
@@ -1137,58 +1142,65 @@ class Application(tk.Tk):
         self._refresh_output_list()
 
     def _load_media_files(self) -> None:
-        self.media_files.clear()
-        self.image_files.clear()
-        for item in self.listbox.get_children():
-            self.listbox.delete(item)
-        self._list_paths.clear()
-        self._list_iids.clear()
-        self._thumbnail_cache.clear()
-        self.canvas.delete("all")
-        self.current_path = None
-        self.current_image = None
-        self._tk_image = None
-        self.crop_info_var.set("Kein Bild ausgewählt.")
-        self._set_controls_enabled(False)
-        self.position_var.set("0/0")
+        import_message = "Importiere Ordner…"
+        self._show_loading_overlay(import_message)
+        self.update_idletasks()
+        try:
+            self.media_files.clear()
+            self.image_files.clear()
+            for item in self.listbox.get_children():
+                self.listbox.delete(item)
+            self._list_paths.clear()
+            self._list_iids.clear()
+            self._thumbnail_cache.clear()
+            self.canvas.delete("all")
+            self.current_path = None
+            self.current_image = None
+            self._tk_image = None
+            self.crop_info_var.set("Kein Bild ausgewählt.")
+            self._set_controls_enabled(False)
+            self.position_var.set("0/0")
 
-        if not self.input_path:
-            return
+            if not self.input_path:
+                return
 
-        files = [self._normalize_path(path) for path in iter_media_files(self.input_path)]
-        files.sort()
-        self.media_files = files
-        for media in self.media_files:
-            display = media.relative_to(self.input_path)
-            index = len(self._list_paths)
-            iid = f"item-{index}"
-            thumbnail = self._thumbnail_for(media)
-            self.listbox.insert("", tk.END, iid=iid, text=str(display), image=thumbnail)
-            self._list_paths.append(media)
-            self._list_iids.append(iid)
-            if is_image(media):
-                self.image_files.append(media)
+            files = [self._normalize_path(path) for path in iter_media_files(self.input_path)]
+            files.sort()
+            self.media_files = files
+            for media in self.media_files:
+                display = media.relative_to(self.input_path)
+                index = len(self._list_paths)
+                iid = f"item-{index}"
+                thumbnail = self._thumbnail_for(media)
+                self.listbox.insert("", tk.END, iid=iid, text=str(display), image=thumbnail)
+                self._list_paths.append(media)
+                self._list_iids.append(iid)
+                if is_image(media):
+                    self.image_files.append(media)
 
-        if self.image_files:
-            first_image = self.image_files[0]
-            index = self._list_paths.index(first_image)
-            self._select_list_index(index)
-            self._on_listbox_select()
-            video_count = len(self.media_files) - len(self.image_files)
-            if video_count:
-                self.progress_var.set(
-                    f"{len(self.media_files)} Dateien geladen – {len(self.image_files)} Bilder, {video_count} Videos."
-                )
+            if self.image_files:
+                first_image = self.image_files[0]
+                index = self._list_paths.index(first_image)
+                self._select_list_index(index)
+                self._on_listbox_select()
+                video_count = len(self.media_files) - len(self.image_files)
+                if video_count:
+                    self.progress_var.set(
+                        f"{len(self.media_files)} Dateien geladen – {len(self.image_files)} Bilder, {video_count} Videos."
+                    )
+                else:
+                    self.progress_var.set(f"{len(self.image_files)} Bilder geladen.")
             else:
-                self.progress_var.set(f"{len(self.image_files)} Bilder geladen.")
-        else:
-            self.progress_var.set("Keine unterstützten Bilder gefunden.")
-            if self.media_files:
-                self.progress_var.set(
-                    f"{len(self.media_files)} Videos gefunden. Bitte Bilder hinzufügen, um Zuschnitte zu bearbeiten."
-                )
-            self._show_placeholder("Keine Bilder verfügbar.")
-        self._update_navigation_state()
+                self.progress_var.set("Keine unterstützten Bilder gefunden.")
+                if self.media_files:
+                    self.progress_var.set(
+                        f"{len(self.media_files)} Videos gefunden. Bitte Bilder hinzufügen, um Zuschnitte zu bearbeiten."
+                    )
+                self._show_placeholder("Keine Bilder verfügbar.")
+            self._update_navigation_state()
+        finally:
+            if self._loading_message_var.get() == import_message:
+                self._hide_loading_overlay()
 
     # ------------------------------------------------------------------
     # Preview & manual crop
@@ -1340,8 +1352,12 @@ class Application(tk.Tk):
         center_y = crop.y + crop.size / 2
         x = center_x - size / 2
         y = center_y - size / 2
-        min_x, max_x = crop_position_bounds(size, width)
-        min_y, max_y = crop_position_bounds(size, height)
+        min_x, max_x = crop_position_bounds(
+            size, width, overflow_ratio=self.PREVIEW_OVERFLOW_RATIO
+        )
+        min_y, max_y = crop_position_bounds(
+            size, height, overflow_ratio=self.PREVIEW_OVERFLOW_RATIO
+        )
         x = clamp(x, min_x, max_x)
         y = clamp(y, min_y, max_y)
         return CropBox(x=x, y=y, size=size)
@@ -1354,7 +1370,7 @@ class Application(tk.Tk):
         *,
         overflow: Optional[float] = None,
     ) -> CropBox:
-        ratio = CROP_OVERFLOW_RATIO if overflow is None else overflow
+        ratio = self.PREVIEW_OVERFLOW_RATIO if overflow is None else overflow
         return normalize_crop_with_overflow(width, height, crop, overflow_ratio=ratio)
 
     def _normalize_manual(self, manual: ManualCrop, overflow: Optional[float] = None) -> ManualCrop:
@@ -1373,8 +1389,12 @@ class Application(tk.Tk):
         width, height = self.current_image.size
         max_side = max(1, max(width, height))
         size_ratio = clamp(crop.size / max_side, 0.01, 1.0)
-        min_x, max_x = crop_position_bounds(crop.size, width)
-        min_y, max_y = crop_position_bounds(crop.size, height)
+        min_x, max_x = crop_position_bounds(
+            crop.size, width, overflow_ratio=self.PREVIEW_OVERFLOW_RATIO
+        )
+        min_y, max_y = crop_position_bounds(
+            crop.size, height, overflow_ratio=self.PREVIEW_OVERFLOW_RATIO
+        )
         range_x = max_x - min_x
         range_y = max_y - min_y
         offset_x = clamp((crop.x - min_x) / range_x if range_x else 0.0, 0.0, 1.0)
@@ -1491,8 +1511,12 @@ class Application(tk.Tk):
         max_side = max(1, max(width, height))
         ratio = clamp(self.size_ratio.get(), 0.01, 1.0)
         size = ratio * max_side
-        min_x, max_x = crop_position_bounds(size, width)
-        min_y, max_y = crop_position_bounds(size, height)
+        min_x, max_x = crop_position_bounds(
+            size, width, overflow_ratio=self.PREVIEW_OVERFLOW_RATIO
+        )
+        min_y, max_y = crop_position_bounds(
+            size, height, overflow_ratio=self.PREVIEW_OVERFLOW_RATIO
+        )
         norm_x = clamp(self.offset_x.get(), 0.0, 1.0)
         norm_y = clamp(self.offset_y.get(), 0.0, 1.0)
         range_x = max_x - min_x
@@ -1611,6 +1635,9 @@ class Application(tk.Tk):
             )
             self.canvas.tag_bind(tag, "<Button-1>", lambda _e, t=target: self._select_crop(t))
 
+        start_color = self._legend_colors.get("start", self._start_color)
+        end_color = self._legend_colors.get("end", self._end_color)
+
         if self.motion_enabled_var.get():
             start_rect = self._canvas_rect(manual.start)
             end_rect = self._canvas_rect(manual.end)
@@ -1620,28 +1647,28 @@ class Application(tk.Tk):
             end_active = active_target == "end"
             self.canvas.create_rectangle(
                 *start_rect,
-                outline="#ff5555",
+                outline=start_color,
                 width=3 if start_active else 2,
             )
-            self._draw_orientation_circle(start_rect, "#ff5555", 3 if start_active else 2)
+            self._draw_orientation_circle(start_rect, start_color, 3 if start_active else 2)
             self.canvas.create_rectangle(
                 *end_rect,
-                outline="#00ff88",
+                outline=end_color,
                 width=3 if end_active else 2,
             )
-            self._draw_orientation_circle(end_rect, "#00ff88", 3 if end_active else 2)
+            self._draw_orientation_circle(end_rect, end_color, 3 if end_active else 2)
             draw_label(start_rect, "start", "1")
             draw_label(end_rect, "end", "2")
             if start_active:
-                self._draw_handles(start_rect, "#ff5555")
+                self._draw_handles(start_rect, start_color)
             else:
-                self._draw_handles(end_rect, "#00ff88")
+                self._draw_handles(end_rect, end_color)
         else:
             end_rect = self._canvas_rect(manual.end)
             self._manual_display["end"] = end_rect
-            self.canvas.create_rectangle(*end_rect, outline="#00ff88", width=3)
-            self._draw_orientation_circle(end_rect, "#00ff88", 3)
-            self._draw_handles(end_rect, "#00ff88")
+            self.canvas.create_rectangle(*end_rect, outline=end_color, width=3)
+            self._draw_orientation_circle(end_rect, end_color, 3)
+            self._draw_handles(end_rect, end_color)
             draw_label(end_rect, "end", "2")
 
         self.canvas.tag_bind("crop_label", "<Enter>", lambda _e: self.canvas.config(cursor="hand2"))
