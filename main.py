@@ -37,12 +37,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--preset", default="medium")
     parser.add_argument("--min-face", type=float, default=0.1)
     parser.add_argument("--face-priority", choices=["largest", "center", "all"], default="largest")
-    parser.add_argument(
-        "--detection",
-        choices=["face", "person", "none"],
-        default="face",
-        help="Erkennungsmodus: Gesichter, Personen oder deaktiviert",
-    )
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--pad", type=float, default=0.0)
     parser.add_argument("--image-format", choices=["jpg", "png", "webp"], default="jpg")
@@ -54,7 +48,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--crop-w", type=int)
     parser.add_argument("--crop-h", type=int)
     parser.add_argument("--format", help="Optionales Format-Preset, z.B. jpg,mp4")
-    parser.add_argument("--no-face", action="store_true", help="Gesichtserkennung deaktivieren")
     parser.add_argument("--gui", action="store_true", help="Tkinter-GUI starten")
     parser.add_argument(
         "--motion-direction",
@@ -77,10 +70,6 @@ def build_options(args: argparse.Namespace) -> ProcessingOptions:
     output_dir = Path(args.output).expanduser() if args.output else None
     if input_path is None or output_dir is None:
         raise ValueError("--input und --output sind erforderlich, sofern nicht --gui verwendet wird")
-    detection_mode = args.detection
-    if args.no_face:
-        detection_mode = "none"
-
     return ProcessingOptions(
         input_path=input_path,
         output_dir=output_dir,
@@ -102,8 +91,8 @@ def build_options(args: argparse.Namespace) -> ProcessingOptions:
         video_ext=args.video_ext,
         keep_audio=args.keep_audio == "on",
         log_level=args.log_level,
-        face_detection_enabled=detection_mode != "none",
-        detection_mode=detection_mode,
+        face_detection_enabled=True,
+        detection_mode="auto",
         motion_direction=args.motion_direction,
     )
 
@@ -128,7 +117,6 @@ def _process_images(
             detector = FaceCropper(
                 min_face=options.min_face,
                 face_priority=options.face_priority,
-                mode=options.detection_mode,
             )
             setattr(thread_local, "detector", detector)
             with detectors_lock:
@@ -163,7 +151,6 @@ def _process_videos(
         FaceCropper(
             min_face=options.min_face,
             face_priority=options.face_priority,
-            mode=options.detection_mode,
         )
         if options.face_detection_enabled
         else None

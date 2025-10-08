@@ -55,11 +55,9 @@ class FaceCropper:
         min_face: float = 0.1,
         face_priority: str = "largest",
         smoothing: float = 0.4,
-        mode: str = "face",
         max_tracking_gap: int = 15,
         max_step_fraction: float = 0.15,
     ) -> None:
-        self.mode = mode
         self.min_face = min_face
         self.face_priority = face_priority
         self.smoother = ExponentialSmoother(alpha=smoothing)
@@ -68,33 +66,33 @@ class FaceCropper:
         self._last_smoothed: Optional[CropBox] = None
         self._lost_frames = 0
 
-        self._use_mediapipe = self.mode == "face" and mp is not None
+        self._use_mediapipe = mp is not None
         self._face_detection: Optional["mp.solutions.face_detection.FaceDetection"] = None
         self._cascade: Optional[cv2.CascadeClassifier] = None
         self._hog: Optional[cv2.HOGDescriptor] = None
-
-        if self.mode == "face":
-            if self._use_mediapipe:
-                self._face_detection = mp.solutions.face_detection.FaceDetection(
-                    model_selection=1, min_detection_confidence=0.4
-                )
-            else:
-                cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-                self._cascade = cv2.CascadeClassifier(cascade_path)
-                if self._cascade.empty():  # pragma: no cover - depends on local OpenCV data files
-                    message = (
-                        "mediapipe ist nicht installiert und das OpenCV-Haar-Cascade-Modell fehlt."
-                        " Bitte installiere entweder mediapipe oder stelle sicher, dass OpenCV korrekt"
-                        " installiert ist."
-                    )
-                    if mp is None:
-                        raise RuntimeError(message) from _IMPORT_ERROR
-                    raise RuntimeError(message)
-        elif self.mode == "person":
-            self._hog = cv2.HOGDescriptor()
-            self._hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+        if self._use_mediapipe:
+            self._face_detection = mp.solutions.face_detection.FaceDetection(
+                model_selection=1, min_detection_confidence=0.4
+            )
         else:
-            raise ValueError(f"Unbekannter Erkennungsmodus: {mode}")
+            cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            self._cascade = cv2.CascadeClassifier(cascade_path)
+            if self._cascade.empty():  # pragma: no cover - depends on local OpenCV data files
+                message = (
+                    "mediapipe ist nicht installiert und das OpenCV-Haar-Cascade-Modell fehlt."
+                    " Bitte installiere entweder mediapipe oder stelle sicher, dass OpenCV korrekt"
+                    " installiert ist."
+                )
+                if mp is None:
+                    raise RuntimeError(message) from _IMPORT_ERROR
+                raise RuntimeError(message)
+
+        self._hog = cv2.HOGDescriptor()
+        self._hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+        self._saliency = None
+        if hasattr(cv2, "saliency") and hasattr(cv2.saliency, "StaticSaliencyFineGrained_create"):
+            with contextlib.suppress(Exception):
+                self._saliency = cv2.saliency.StaticSaliencyFineGrained_create()
 
     def close(self) -> None:
         if self._use_mediapipe and self._face_detection is not None:
@@ -165,7 +163,46 @@ class FaceCropper:
             x_adj = clamp(cx - size / 2, 0, max(0, w - size))
             y_adj = clamp(cy - size / 2, 0, max(0, h - size))
             base = CropBox(x=x_adj, y=y_adj, size=size)
-            detections.append(DetectionResult(score=float(score), box=self._circle_aligned_box(base, w, h)))
+            detections.append(
+                DetectionResult(score=float(max(0.0, min(score, 1.0))), box=self._circle_aligned_box(base, w, h))
+            )
+        return detections
+
+    def _detect_saliency(self, image: np.ndarray) -> List[DetectionResult]:
+        detections: List[DetectionResult] = []
+        h, w = image.shape[:2]
+        saliency_map: Optional[np.ndarray] = None
+        if self._saliency is not None:
+            success, saliency = self._saliency.computeSaliency(image)
+            if success and saliency is not None:
+                saliency_map = (saliency * 255).astype("uint8")
+        if saliency_map is None:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+            lap = cv2.Laplacian(blurred, cv2.CV_32F)
+            saliency_map = cv2.convertScaleAbs(lap)
+        blurred_saliency = cv2.GaussianBlur(saliency_map, (5, 5), 0)
+        _threshold, binary = cv2.threshold(
+            blurred_saliency, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        )
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
+        contours, _hierarchy = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return detections
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)
+        image_area = float(w * h)
+        for contour in contours[:3]:
+            area = cv2.contourArea(contour)
+            if area < image_area * 0.02:
+                continue
+            x, y, width, height = cv2.boundingRect(contour)
+            size = max(width, height)
+            cx = x + width / 2
+            cy = y + height / 2
+            x_adj = clamp(cx - size / 2, 0, max(0, w - size))
+            y_adj = clamp(cy - size / 2, 0, max(0, h - size))
+            base = CropBox(x=x_adj, y=y_adj, size=max(size, self.min_face * min(w, h)))
+            detections.append(DetectionResult(score=0.35, box=self._circle_aligned_box(base, w, h)))
         return detections
 
     def _circle_aligned_box(self, box: CropBox, width: int, height: int) -> CropBox:
@@ -175,8 +212,8 @@ class FaceCropper:
         size = clamp(expanded.size, min_size, max_size)
         center_x = expanded.x + expanded.size / 2
         center_y = expanded.y + expanded.size / 2
-        x = center_x - size / 2
-        y = center_y - size / 2
+        x = clamp(center_x - size / 2, 0.0, max(0.0, width - size))
+        y = clamp(center_y - size / 2, 0.0, max(0.0, height - size))
         return CropBox(x=x, y=y, size=size)
 
     def _filter_relevant_detections(self, detections: List[DetectionResult]) -> List[DetectionResult]:
@@ -245,11 +282,22 @@ class FaceCropper:
         return CropBox(x=x, y=y, size=size)
 
     def detect_subjects(self, image: np.ndarray) -> List[DetectionResult]:
-        if self.mode == "person":
-            return self._detect_people(image)
+        detections: List[DetectionResult] = []
         if self._use_mediapipe:
-            return self._detect_with_mediapipe(image)
-        return self._detect_with_cascade(image)
+            detections.extend(self._detect_with_mediapipe(image))
+        else:
+            detections.extend(self._detect_with_cascade(image))
+        best_score = max((det.score for det in detections), default=0.0)
+        extra_people: List[DetectionResult] = []
+        if best_score < 0.6 or len(detections) < 1:
+            extra_people = self._detect_people(image)
+            if extra_people:
+                detections.extend(extra_people)
+        if not detections and extra_people:
+            detections = extra_people
+        if not detections:
+            detections = self._detect_saliency(image)
+        return detections
 
     def select_detection(self, detections: List[DetectionResult], width: int, height: int) -> Optional[DetectionResult]:
         if not detections:

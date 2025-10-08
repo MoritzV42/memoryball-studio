@@ -21,6 +21,7 @@ from .utils import (
     ManualCrop,
     ProcessingOptions,
     ORIENTATION_CIRCLE_MARGIN,
+    CROP_OVERFLOW_RATIO,
     clamp,
     crop_position_bounds,
     ensure_dir,
@@ -39,11 +40,6 @@ class Application(tk.Tk):
 
     CANVAS_SIZE = 520
     CIRCLE_MARGIN = ORIENTATION_CIRCLE_MARGIN
-    DETECTION_CHOICES = [
-        ("face", "Gesichtserkennung"),
-        ("person", "Menscherkennung"),
-        ("none", "Keine Erkennung"),
-    ]
     MOTION_DIRECTION_CHOICES = [
         ("in", "Reinzoomen"),
         ("out", "Rauszoomen"),
@@ -69,7 +65,7 @@ class Application(tk.Tk):
         self._updating_controls = False
         self.output_media_files: list[Path] = []
         self._legend_items: dict[str, dict[str, object]] = {}
-        self._legend_colors = {"start": "#ff5555", "end": "#00ff88"}
+        self._legend_colors = {"start": self._danger_color, "end": self._success_color}
         self._crop_buttons: dict[str, ttk.Button] = {}
         self._crop_buttons_enabled = True
         self._tutorial_window: Optional[tk.Toplevel] = None
@@ -80,10 +76,6 @@ class Application(tk.Tk):
 
         self.input_var = tk.StringVar()
         self.output_var = tk.StringVar()
-        self._detection_value_by_label = {label: value for value, label in self.DETECTION_CHOICES}
-        self._detection_label_by_value = {value: label for value, label in self.DETECTION_CHOICES}
-        self.detection_mode_var = tk.StringVar(value=self._detection_label_by_value["face"])
-        self._last_detection_mode = "face"
         self.size_var = tk.IntVar(value=480)
         self.size_ratio = tk.DoubleVar(value=1.0)
         self.offset_x = tk.DoubleVar(value=0.0)
@@ -114,30 +106,33 @@ class Application(tk.Tk):
         self._build_layout()
         self._update_motion_direction_state()
         self.after(1000, self._maybe_start_tutorial)
-        self.detection_mode_var.trace_add("write", self._on_detection_change)
         self.active_crop_var.trace_add("write", self._on_active_crop_change)
 
     # ------------------------------------------------------------------
     # Layout & UI
     # ------------------------------------------------------------------
     def _configure_style(self) -> None:
-        background = "#0f111a"
-        card_background = "#161a27"
-        accent = "#3f8efc"
+        background = "#050b18"
+        card_background = "#0e1629"
+        accent = "#4f78ff"
+        success = "#2fdf84"
+        danger = "#ff6b6b"
         self._background_color = background
         self._card_background = card_background
         self._accent_color = accent
+        self._success_color = success
+        self._danger_color = danger
         self.configure(background=background)
         self.option_add("*Font", "{Segoe UI} 10")
         self.option_add("*Label.font", "{Segoe UI} 10")
         self.option_add("*Entry.background", card_background)
-        self.option_add("*Entry.foreground", "#f5f7fa")
-        self.option_add("*Entry.insertBackground", "#f5f7fa")
+        self.option_add("*Entry.foreground", "#e4ebff")
+        self.option_add("*Entry.insertBackground", "#e4ebff")
         self.option_add("*Spinbox.background", card_background)
-        self.option_add("*Spinbox.foreground", "#f5f7fa")
-        self.option_add("*Spinbox.insertBackground", "#f5f7fa")
+        self.option_add("*Spinbox.foreground", "#e4ebff")
+        self.option_add("*Spinbox.insertBackground", "#e4ebff")
         self.option_add("*TCombobox*Listbox.background", card_background)
-        self.option_add("*TCombobox*Listbox.foreground", "#f5f7fa")
+        self.option_add("*TCombobox*Listbox.foreground", "#e4ebff")
         self.option_add("*TCombobox*Listbox.selectBackground", accent)
         self.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
 
@@ -148,117 +143,191 @@ class Application(tk.Tk):
             pass
         style.configure("TFrame", background=background)
         style.configure("Card.TFrame", background=card_background, relief="flat")
-        style.configure("TLabel", background=background, foreground="#f5f7fa")
-        style.configure("Section.TLabel", background=background, foreground="#9aa0b5", font=("Segoe UI", 9, "bold"))
-        style.configure("Heading.TLabel", background=background, foreground="#f5f7fa", font=("Segoe UI", 12, "bold"))
-        style.configure("Tutorial.TLabel", background=card_background, foreground="#f5f7fa")
-        style.configure("TutorialHeading.TLabel", background=card_background, foreground="#f5f7fa", font=("Segoe UI", 12, "bold"))
-        style.configure("TButton", padding=8)
+        style.configure("TLabel", background=background, foreground="#e4ebff")
+        style.configure("Title.TLabel", background=background, foreground="#f4f7ff", font=("Segoe UI", 16, "bold"))
+        style.configure("Subtitle.TLabel", background=background, foreground="#8d9ac0", font=("Segoe UI", 10))
+        style.configure("Section.TLabel", background=card_background, foreground="#9aa7c6", font=("Segoe UI", 9, "bold"))
+        style.configure("Heading.TLabel", background=card_background, foreground="#f4f7ff", font=("Segoe UI", 12, "bold"))
+        style.configure("Body.TLabel", background=card_background, foreground="#cbd5ff")
+        style.configure("Status.TLabel", background=background, foreground="#8d9ac0", font=("Segoe UI", 9))
+        style.configure("Tutorial.TLabel", background=card_background, foreground="#f4f7ff")
+        style.configure("TutorialHeading.TLabel", background=card_background, foreground="#f4f7ff", font=("Segoe UI", 12, "bold"))
+        style.configure("TButton", padding=8, background=card_background, foreground="#e4ebff")
+        style.configure("TCheckbutton", background=card_background, foreground="#cbd5ff")
+        style.configure("TRadiobutton", background=card_background, foreground="#cbd5ff")
         style.configure(
             "Accent.TButton",
             background=accent,
             foreground="#ffffff",
             padding=10,
             borderwidth=0,
+            focusthickness=0,
+            font=("Segoe UI", 10, "bold"),
         )
         style.map(
             "Accent.TButton",
-            background=[("active", "#1f6feb"), ("disabled", "#1b1f2b")],
-            foreground=[("disabled", "#9aa0b5")],
+            background=[("active", "#325df6"), ("pressed", "#284fe3"), ("disabled", "#1b2033")],
+            foreground=[("disabled", "#5f6a8e")],
+        )
+        style.configure(
+            "Start.TButton",
+            background=success,
+            foreground="#02131f",
+            padding=(12, 6),
+            borderwidth=0,
+            focusthickness=0,
+            font=("Segoe UI", 11, "bold"),
+        )
+        style.map(
+            "Start.TButton",
+            background=[("active", "#4af29a"), ("pressed", "#24c375"), ("disabled", "#1b2033")],
+            relief=[("pressed", "sunken"), ("!pressed", "flat")],
+        )
+        style.configure(
+            "StartActive.TButton",
+            background="#47ffad",
+            foreground="#02131f",
+            padding=(12, 6),
+            borderwidth=0,
+            focusthickness=0,
+            font=("Segoe UI", 11, "bold"),
+        )
+        style.map(
+            "StartActive.TButton",
+            background=[("active", "#60ffba"), ("pressed", "#32d98f"), ("disabled", "#1b2033")],
+            relief=[("pressed", "sunken"), ("!pressed", "flat")],
+        )
+        style.configure(
+            "End.TButton",
+            background=danger,
+            foreground="#02131f",
+            padding=(12, 6),
+            borderwidth=0,
+            focusthickness=0,
+            font=("Segoe UI", 11, "bold"),
+        )
+        style.map(
+            "End.TButton",
+            background=[("active", "#ff8080"), ("pressed", "#ff5252"), ("disabled", "#1b2033")],
+            relief=[("pressed", "sunken"), ("!pressed", "flat")],
+        )
+        style.configure(
+            "EndActive.TButton",
+            background="#ff8a8a",
+            foreground="#02131f",
+            padding=(12, 6),
+            borderwidth=0,
+            focusthickness=0,
+            font=("Segoe UI", 11, "bold"),
+        )
+        style.map(
+            "EndActive.TButton",
+            background=[("active", "#ff9c9c"), ("pressed", "#ff6b6b"), ("disabled", "#1b2033")],
+            relief=[("pressed", "sunken"), ("!pressed", "flat")],
+        )
+        style.configure(
+            "Nav.TButton",
+            background=card_background,
+            foreground="#c7d3ff",
+            padding=(10, 6),
+            borderwidth=1,
+            relief="solid",
+            focusthickness=0,
+        )
+        style.map(
+            "Nav.TButton",
+            background=[("active", "#1a2642"), ("pressed", "#233354")],
+            foreground=[("disabled", "#5f6a8e")],
         )
         style.configure(
             "Modern.TCombobox",
             fieldbackground=card_background,
             background=card_background,
-            foreground="#f5f7fa",
+            foreground="#e4ebff",
         )
         style.map(
             "Modern.TCombobox",
             fieldbackground=[("readonly", card_background)],
             background=[("readonly", card_background)],
         )
-        style.configure("Horizontal.TScale", background=background, troughcolor=card_background)
+        style.configure("Horizontal.TScale", background=card_background, troughcolor="#1b2945")
         style.configure(
             "Modern.TSpinbox",
             fieldbackground=card_background,
             background=card_background,
-            foreground="#f5f7fa",
+            foreground="#e4ebff",
         )
         style.map("Modern.TSpinbox", fieldbackground=[("readonly", card_background)])
-
-    def _current_detection_mode(self) -> str:
-        return self._detection_value_by_label.get(
-            self.detection_mode_var.get(),
-            "none",
-        )
 
     def _build_layout(self) -> None:
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
 
-        main = ttk.Frame(self, padding=16)
+        main = ttk.Frame(self, padding=20)
         main.grid(row=0, column=0, sticky="nsew")
         main.columnconfigure(0, weight=0)
         main.columnconfigure(1, weight=1)
         main.columnconfigure(2, weight=0)
-        main.rowconfigure(1, weight=1)
+        main.rowconfigure(2, weight=1)
 
-        top = ttk.Frame(main)
-        top.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 16))
-        top.columnconfigure(0, weight=1)
-        top.columnconfigure(1, weight=0)
-
-        input_card = ttk.Frame(top, style="Card.TFrame", padding=16)
-        input_card.grid(row=0, column=0, sticky="ew")
-        input_card.columnconfigure(1, weight=1)
-
+        header = ttk.Frame(main)
+        header.grid(row=0, column=0, columnspan=3, sticky="ew")
+        header.columnconfigure(0, weight=1)
+        ttk.Label(header, text="Memory Ball Studio", style="Title.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            header,
+            text="Intelligente Ausrichtung für Fotos & Videos",
+            style="Subtitle.TLabel",
+        ).grid(row=1, column=0, sticky="w", pady=(2, 0))
         self.tutorial_button = ttk.Button(
-            top,
+            header,
             text="❔ Tutorial",
             command=self._start_tutorial,
             style="Accent.TButton",
         )
-        self.tutorial_button.grid(row=0, column=1, sticky="ne", padx=(12, 0))
+        self.tutorial_button.grid(row=0, column=1, rowspan=2, sticky="ne", padx=(12, 0))
 
-        ttk.Label(input_card, text="Ordner", style="Heading.TLabel").grid(row=0, column=0, columnspan=3, sticky="w")
-        ttk.Label(input_card, text="Eingabeordner", style="Section.TLabel").grid(
+        io_card = ttk.Frame(main, style="Card.TFrame", padding=(20, 16))
+        io_card.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(12, 16))
+        io_card.columnconfigure(1, weight=1)
+        io_card.columnconfigure(4, weight=1)
+
+        ttk.Label(io_card, text="Ordner", style="Heading.TLabel").grid(row=0, column=0, columnspan=6, sticky="w")
+
+        ttk.Label(io_card, text="Eingabeordner", style="Section.TLabel").grid(
             row=1, column=0, sticky="w", pady=(12, 0)
         )
-        self.input_entry = ttk.Entry(input_card, textvariable=self.input_var)
+        self.input_entry = ttk.Entry(io_card, textvariable=self.input_var, width=32)
         self.input_entry.grid(
-            row=1, column=1, sticky="ew", padx=(12, 8), pady=(12, 0)
+            row=1,
+            column=1,
+            sticky="ew",
+            padx=(8, 8),
+            pady=(12, 0),
         )
-        ttk.Button(input_card, text="Wählen…", command=self._choose_input).grid(
+        ttk.Button(io_card, text="Wählen…", command=self._choose_input).grid(
             row=1, column=2, sticky="ew", pady=(12, 0)
         )
 
-        ttk.Label(input_card, text="Ausgabeordner", style="Section.TLabel").grid(
-            row=2, column=0, sticky="w", pady=(12, 0)
+        ttk.Label(io_card, text="Ausgabeordner", style="Section.TLabel").grid(
+            row=1, column=3, sticky="w", pady=(12, 0), padx=(24, 0)
         )
-        self.output_entry = ttk.Entry(input_card, textvariable=self.output_var)
+        self.output_entry = ttk.Entry(io_card, textvariable=self.output_var, width=32)
         self.output_entry.grid(
-            row=2, column=1, sticky="ew", padx=(12, 8), pady=(12, 0)
+            row=1,
+            column=4,
+            sticky="ew",
+            padx=(8, 8),
+            pady=(12, 0),
         )
-        ttk.Button(input_card, text="Wählen…", command=self._choose_output).grid(
-            row=2, column=2, sticky="ew", pady=(12, 0)
+        ttk.Button(io_card, text="Wählen…", command=self._choose_output).grid(
+            row=1, column=5, sticky="ew", pady=(12, 0)
         )
 
-        options = ttk.Frame(input_card)
-        options.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(16, 0))
-        options.columnconfigure(3, weight=1)
-
-        ttk.Label(options, text="Motiv-Erkennung", style="Section.TLabel").grid(row=0, column=0, sticky="w")
-        detection_labels = list(self._detection_value_by_label.keys())
-        ttk.Combobox(
-            options,
-            textvariable=self.detection_mode_var,
-            values=detection_labels,
-            state="readonly",
-            style="Modern.TCombobox",
-            width=18,
-        ).grid(row=0, column=1, sticky="w", padx=(8, 16))
-
-        ttk.Label(options, text="Zielgröße", style="Section.TLabel").grid(row=0, column=2, sticky="w")
+        options = ttk.Frame(io_card)
+        options.grid(row=2, column=0, columnspan=6, sticky="ew", pady=(16, 0))
+        options.columnconfigure(1, weight=1)
+        ttk.Label(options, text="Zielgröße", style="Section.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Spinbox(
             options,
             from_=256,
@@ -267,10 +336,10 @@ class Application(tk.Tk):
             textvariable=self.size_var,
             width=7,
             style="Modern.TSpinbox",
-        ).grid(row=0, column=3, sticky="w")
+        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
 
-        list_frame = ttk.Frame(main, style="Card.TFrame", padding=16)
-        list_frame.grid(row=1, column=0, sticky="nswe")
+        list_frame = ttk.Frame(main, style="Card.TFrame", padding=20)
+        list_frame.grid(row=2, column=0, sticky="nswe")
         list_frame.columnconfigure(0, weight=1)
         list_frame.rowconfigure(1, weight=1)
         ttk.Label(list_frame, text="Bilder & Videos", style="Heading.TLabel").grid(row=0, column=0, sticky="w")
@@ -279,11 +348,11 @@ class Application(tk.Tk):
         self.listbox.grid(row=1, column=0, sticky="nswe", pady=(6, 0))
         self.listbox.bind("<<ListboxSelect>>", lambda _event: self._on_listbox_select())
         self.listbox.configure(
-            background="#0b0f1c",
-            foreground="#f5f7fa",
+            background="#0a1326",
+            foreground="#ecf0ff",
             borderwidth=0,
             highlightthickness=0,
-            selectbackground="#1f6feb",
+            selectbackground="#3f71ff",
             selectforeground="#ffffff",
             activestyle="none",
         )
@@ -292,24 +361,27 @@ class Application(tk.Tk):
         scrollbar.grid(row=1, column=1, sticky="ns")
         self.listbox.configure(yscrollcommand=scrollbar.set)
 
-        preview = ttk.Frame(main, style="Card.TFrame", padding=16)
-        preview.grid(row=1, column=1, sticky="nsew", padx=(16, 0))
+        preview = ttk.Frame(main, style="Card.TFrame", padding=20)
+        preview.grid(row=2, column=1, sticky="nsew", padx=(16, 0))
         preview.columnconfigure(0, weight=1)
+        preview.rowconfigure(2, weight=1)
 
         ttk.Label(preview, text="Vorschau", style="Heading.TLabel").grid(row=0, column=0, sticky="w")
         button_frame = ttk.Frame(preview)
-        button_frame.grid(row=1, column=0, sticky="w", pady=(8, 0))
+        button_frame.grid(row=1, column=0, sticky="w", pady=(10, 0))
         self._crop_buttons = {
             "start": ttk.Button(
                 button_frame,
                 text="1",
-                width=4,
+                width=3,
+                style="Start.TButton",
                 command=lambda: self._select_crop("start"),
             ),
             "end": ttk.Button(
                 button_frame,
                 text="2",
-                width=4,
+                width=3,
+                style="End.TButton",
                 command=lambda: self._select_crop("end"),
             ),
         }
@@ -321,11 +393,11 @@ class Application(tk.Tk):
             preview,
             width=self.CANVAS_SIZE,
             height=self.CANVAS_SIZE,
-            background="#0b0f1c",
+            background="#060d1d",
             highlightthickness=0,
             bd=0,
         )
-        self.canvas.grid(row=2, column=0, sticky="n", pady=(12, 16))
+        self.canvas.grid(row=2, column=0, sticky="n", pady=(16, 12))
         self.canvas.bind("<ButtonPress-1>", self._on_canvas_press)
         self.canvas.bind("<B1-Motion>", self._on_canvas_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
@@ -338,10 +410,10 @@ class Application(tk.Tk):
         nav = ttk.Frame(preview)
         nav.grid(row=4, column=0, sticky="ew", pady=(0, 12))
         nav.columnconfigure(1, weight=1)
-        self.prev_button = ttk.Button(nav, text="◀", width=4, command=self._show_previous_image)
+        self.prev_button = ttk.Button(nav, text="◀", width=3, command=self._show_previous_image, style="Nav.TButton")
         self.prev_button.grid(row=0, column=0, sticky="w")
         ttk.Label(nav, textvariable=self.position_var, style="Section.TLabel").grid(row=0, column=1)
-        self.next_button = ttk.Button(nav, text="▶", width=4, command=self._show_next_image)
+        self.next_button = ttk.Button(nav, text="▶", width=3, command=self._show_next_image, style="Nav.TButton")
         self.next_button.grid(row=0, column=2, sticky="e")
 
         motion_controls = ttk.Frame(preview)
@@ -387,15 +459,15 @@ class Application(tk.Tk):
         sliders.columnconfigure(1, weight=1)
         sliders.columnconfigure(3, weight=1)
 
-        ttk.Label(sliders, text="Zoom").grid(row=0, column=0, sticky="w")
+        ttk.Label(sliders, text="Zoom", style="Body.TLabel").grid(row=0, column=0, sticky="w")
         self.size_scale = ttk.Scale(sliders, from_=0.25, to=1.0, variable=self.size_ratio, command=self._on_slider_change)
         self.size_scale.grid(row=0, column=1, sticky="ew", padx=(6, 6))
 
-        ttk.Label(sliders, text="X-Position").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(sliders, text="X-Position", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(6, 0))
         self.x_scale = ttk.Scale(sliders, from_=0.0, to=1.0, variable=self.offset_x, command=self._on_slider_change)
         self.x_scale.grid(row=1, column=1, sticky="ew", padx=(6, 6), pady=(6, 0))
 
-        ttk.Label(sliders, text="Y-Position").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(sliders, text="Y-Position", style="Body.TLabel").grid(row=2, column=0, sticky="w", pady=(6, 0))
         self.y_scale = ttk.Scale(sliders, from_=0.0, to=1.0, variable=self.offset_y, command=self._on_slider_change)
         self.y_scale.grid(row=2, column=1, sticky="ew", padx=(6, 6), pady=(6, 0))
 
@@ -414,19 +486,19 @@ class Application(tk.Tk):
             pady=(12, 0),
         )
 
-        output = ttk.Frame(main, style="Card.TFrame", padding=16)
-        output.grid(row=1, column=2, sticky="nsw", padx=(16, 0))
+        output = ttk.Frame(main, style="Card.TFrame", padding=20)
+        output.grid(row=2, column=2, sticky="nsw", padx=(16, 0))
         output.columnconfigure(0, weight=1)
         output.rowconfigure(1, weight=1)
         ttk.Label(output, text="Ausgabe", style="Heading.TLabel").grid(row=0, column=0, sticky="w")
         self.output_listbox = tk.Listbox(output, exportselection=False, height=20)
         self.output_listbox.grid(row=1, column=0, sticky="nswe", pady=(6, 0))
         self.output_listbox.configure(
-            background="#0b0f1c",
-            foreground="#f5f7fa",
+            background="#0a1326",
+            foreground="#ecf0ff",
             borderwidth=0,
             highlightthickness=0,
-            selectbackground="#1f6feb",
+            selectbackground="#3f71ff",
             selectforeground="#ffffff",
             activestyle="none",
         )
@@ -446,7 +518,7 @@ class Application(tk.Tk):
         bottom.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(16, 0))
         bottom.columnconfigure(0, weight=1)
 
-        ttk.Label(bottom, textvariable=self.progress_var, style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(bottom, textvariable=self.progress_var, style="Status.TLabel").grid(row=0, column=0, sticky="w")
         buttons = ttk.Frame(bottom)
         buttons.grid(row=0, column=1, sticky="e")
         self.convert_selected_button = ttk.Button(
@@ -480,16 +552,18 @@ class Application(tk.Tk):
                 text=number,
                 fg=self._legend_colors.get(key, "#ffffff"),
                 bg=self._card_background,
-                font=("Segoe UI", 12, "bold"),
-                borderwidth=1,
-                relief="solid",
-                padx=8,
-                pady=2,
+                font=("Segoe UI", 11, "bold"),
+                borderwidth=0,
+                highlightthickness=2,
+                highlightbackground=self._legend_colors.get(key, "#ffffff"),
+                highlightcolor=self._legend_colors.get(key, "#ffffff"),
+                padx=10,
+                pady=4,
                 cursor="hand2",
             )
             number_label.grid(row=0, column=index * 2, padx=padx)
             number_label.bind("<Button-1>", lambda _e, target=key: self._select_crop(target))
-            description_label = ttk.Label(parent, text=description, cursor="hand2")
+            description_label = ttk.Label(parent, text=description, cursor="hand2", style="Body.TLabel")
             description_label.grid(row=0, column=index * 2 + 1, sticky="w")
             description_label.bind("<Button-1>", lambda _e, target=key: self._select_crop(target))
             self._legend_items[key] = {
@@ -511,29 +585,48 @@ class Application(tk.Tk):
                 number_label.configure(cursor="hand2")
                 text_label.configure(cursor="hand2")
                 if is_active:
-                    number_label.configure(bg=color, fg=self._background_color, relief="raised")
+                    number_label.configure(
+                        bg=color,
+                        fg="#02131f",
+                        highlightbackground=color,
+                        highlightcolor=color,
+                    )
                 else:
-                    number_label.configure(bg=self._card_background, fg=color, relief="solid")
-                text_label.configure(foreground="#f5f7fa")
+                    number_label.configure(
+                        bg=self._card_background,
+                        fg=color,
+                        highlightbackground=color,
+                        highlightcolor=color,
+                    )
+                text_label.configure(foreground="#e4ebff")
             else:
-                number_label.configure(bg=self._card_background, fg="#4c5267", relief="solid", cursor="")
-                text_label.configure(foreground="#5a6176", cursor="")
+                number_label.configure(
+                    bg=self._card_background,
+                    fg="#3f4f78",
+                    highlightbackground="#26324e",
+                    highlightcolor="#26324e",
+                    cursor="",
+                )
+                text_label.configure(foreground="#4c5c80", cursor="")
 
     def _refresh_crop_buttons(self) -> None:
         if not self._crop_buttons:
             return
         if not self._crop_buttons_enabled:
-            for button in self._crop_buttons.values():
+            for key, button in self._crop_buttons.items():
+                base_style = "Start.TButton" if key == "start" else "End.TButton"
                 button.state(["disabled"])
-                button.configure(style="TButton")
+                button.configure(style=base_style)
             return
         for key, button in self._crop_buttons.items():
+            base_style = "Start.TButton" if key == "start" else "End.TButton"
+            active_style = "StartActive.TButton" if key == "start" else "EndActive.TButton"
             if key == "start" and not self.motion_enabled_var.get():
                 button.state(["disabled"])
-                button.configure(style="TButton")
+                button.configure(style=base_style)
                 continue
             button.state(["!disabled"])
-            style = "Accent.TButton" if self.active_crop_var.get() == key else "TButton"
+            style = active_style if self.active_crop_var.get() == key else base_style
             button.configure(style=style)
 
     def _select_crop(self, target: str) -> None:
@@ -775,13 +868,8 @@ class Application(tk.Tk):
         return Path(raw).expanduser()
 
     def _get_preview_cropper(self) -> Optional[FaceCropper]:
-        mode = self._current_detection_mode()
-        if mode == "none":
-            return None
-        if self._preview_cropper is None or getattr(self._preview_cropper, "mode", None) != mode:
-            if self._preview_cropper is not None:
-                self._preview_cropper.close()
-            self._preview_cropper = FaceCropper(mode=mode)
+        if self._preview_cropper is None:
+            self._preview_cropper = FaceCropper()
         return self._preview_cropper
 
     def destroy(self) -> None:  # pragma: no cover - GUI shutdown
@@ -902,23 +990,27 @@ class Application(tk.Tk):
 
     def _auto_manual_current(self) -> ManualCrop:
         assert self.current_image is not None and self.input_path is not None
-        detection_mode = self._current_detection_mode()
         options = ProcessingOptions(
             input_path=self.input_path,
             output_dir=self._resolve_output_dir() or self._default_output_for(self.input_path),
             size=self.size_var.get(),
-            face_detection_enabled=detection_mode != "none",
-            detection_mode=detection_mode,
+            face_detection_enabled=True,
+            detection_mode="auto",
             motion_enabled=self.motion_enabled_var.get(),
             motion_direction=self.motion_direction_var.get(),
         )
         cropper = self._get_preview_cropper()
-        if options.motion_enabled:
+        if options.motion_enabled and cropper is not None:
             manual = determine_motion_manual(self.current_image, options, cropper)
-        else:
+        elif cropper is not None:
             crop = determine_crop_box(self.current_image, options, cropper)
             manual = ManualCrop(start=crop, end=crop)
-        return self._normalize_manual(manual)
+        else:
+            width, height = self.current_image.size
+            size = float(min(width, height))
+            base = CropBox((width - size) / 2, (height - size) / 2, size)
+            manual = ManualCrop(start=base, end=base)
+        return self._normalize_manual(manual, overflow=0.0)
 
     def _scale_crop(self, crop: CropBox, factor: float, width: int, height: int) -> CropBox:
         factor = clamp(factor, 0.01, 10.0)
@@ -933,14 +1025,22 @@ class Application(tk.Tk):
         y = clamp(y, min_y, max_y)
         return CropBox(x=x, y=y, size=size)
 
-    def _normalize_crop_box(self, crop: CropBox, width: int, height: int) -> CropBox:
-        return normalize_crop_with_overflow(width, height, crop)
+    def _normalize_crop_box(
+        self,
+        crop: CropBox,
+        width: int,
+        height: int,
+        *,
+        overflow: Optional[float] = None,
+    ) -> CropBox:
+        ratio = CROP_OVERFLOW_RATIO if overflow is None else overflow
+        return normalize_crop_with_overflow(width, height, crop, overflow_ratio=ratio)
 
-    def _normalize_manual(self, manual: ManualCrop) -> ManualCrop:
+    def _normalize_manual(self, manual: ManualCrop, overflow: Optional[float] = None) -> ManualCrop:
         assert self.current_image is not None
         width, height = self.current_image.size
-        start = self._normalize_crop_box(manual.start, width, height)
-        end = self._normalize_crop_box(manual.end, width, height)
+        start = self._normalize_crop_box(manual.start, width, height, overflow=overflow)
+        end = self._normalize_crop_box(manual.end, width, height, overflow=overflow)
         return ManualCrop(start=start, end=end)
 
     def _active_manual_crop(self, manual: ManualCrop) -> CropBox:
@@ -1502,18 +1602,6 @@ class Application(tk.Tk):
         self.manual_crops[self.current_path] = manual
         self._apply_manual_to_controls(manual)
 
-    def _on_detection_change(self, *_args: object) -> None:
-        mode = self._current_detection_mode()
-        if mode == self._last_detection_mode:
-            return
-        self._last_detection_mode = mode
-        if self._preview_cropper is not None:
-            self._preview_cropper.close()
-            self._preview_cropper = None
-        if self.current_path is not None and self.current_image is not None:
-            self.manual_crops.pop(self.current_path, None)
-            self._reset_crop_to_auto()
-
     def _refresh_output_list(self) -> None:
         self.output_media_files.clear()
         self.output_listbox.delete(0, tk.END)
@@ -1621,13 +1709,12 @@ class Application(tk.Tk):
         files_subset: Optional[list[Path]] = None,
     ) -> None:
         assert self.input_path is not None
-        detection_mode = self._current_detection_mode()
         options = ProcessingOptions(
             input_path=self.input_path,
             output_dir=output_dir,
             size=self.size_var.get(),
-            face_detection_enabled=detection_mode != "none",
-            detection_mode=detection_mode,
+            face_detection_enabled=True,
+            detection_mode="auto",
             motion_enabled=self.motion_enabled_var.get(),
             motion_direction=self.motion_direction_var.get(),
         )
@@ -1651,7 +1738,6 @@ class Application(tk.Tk):
             FaceCropper(
                 min_face=options.min_face,
                 face_priority=options.face_priority,
-                mode=options.detection_mode,
             )
             if options.face_detection_enabled
             else None
