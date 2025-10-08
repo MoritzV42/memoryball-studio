@@ -85,6 +85,8 @@ class Application(tk.Tk):
     MIN_ZOOM_RATIO = 0.25
     MAX_ZOOM_RATIO = 1.0
     CENTER_VALUE = 0.5
+    MIN_MEMORY_CARD_SIZE = 56
+    MEMORY_CARD_GAP = 8
 
     def __init__(self) -> None:
         super().__init__()
@@ -137,6 +139,9 @@ class Application(tk.Tk):
         self._memory_container: Optional[ttk.Frame] = None
         self._memory_game_state: Optional[MemoryGameState] = None
         self._memory_flip_job: Optional[str] = None
+        self._settings_collapsed = False
+        self._settings_container: Optional[ttk.Frame] = None
+        self._settings_toggle_button: Optional[ttk.Button] = None
 
         self.input_var = tk.StringVar()
         self.output_var = tk.StringVar()
@@ -345,63 +350,56 @@ class Application(tk.Tk):
         main.columnconfigure(0, weight=0)
         main.columnconfigure(1, weight=1)
         main.columnconfigure(2, weight=0)
-        main.rowconfigure(2, weight=1)
-        main.rowconfigure(3, weight=0)
+        main.rowconfigure(1, weight=1)
+        main.rowconfigure(2, weight=0)
 
         header = ttk.Frame(main)
         header.grid(row=0, column=0, columnspan=3, sticky="ew")
         header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="Memory Ball Studio", style="Title.TLabel").grid(row=0, column=0, sticky="w")
+        header.columnconfigure(1, weight=1)
+        title_frame = ttk.Frame(header)
+        title_frame.grid(row=0, column=0, rowspan=2, sticky="w")
+        ttk.Label(title_frame, text="Memory Ball Studio", style="Title.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
         ttk.Label(
-            header,
+            title_frame,
             text="Intelligente Ausrichtung für Fotos & Videos",
             style="Subtitle.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(2, 0))
+
+        io_header = ttk.Frame(header)
+        io_header.grid(row=0, column=1, rowspan=2, sticky="new", padx=(24, 0))
+        io_header.columnconfigure(1, weight=1)
+
+        ttk.Label(io_header, text="Eingabeordner", style="Section.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        self.input_entry = ttk.Entry(io_header, textvariable=self.input_var, width=32)
+        self.input_entry.grid(row=0, column=1, sticky="ew", padx=(8, 8))
+        ttk.Button(io_header, text="Wählen…", command=self._choose_input).grid(
+            row=0, column=2, sticky="ew"
+        )
+
+        ttk.Label(io_header, text="Ausgabeordner", style="Section.TLabel").grid(
+            row=1, column=0, sticky="w", pady=(8, 0)
+        )
+        self.output_entry = ttk.Entry(io_header, textvariable=self.output_var, width=32)
+        self.output_entry.grid(row=1, column=1, sticky="ew", padx=(8, 8), pady=(8, 0))
+        ttk.Button(io_header, text="Wählen…", command=self._choose_output).grid(
+            row=1, column=2, sticky="ew", pady=(8, 0)
+        )
+
         self.tutorial_button = ttk.Button(
             header,
             text="❔ Tutorial",
             command=self._start_tutorial,
             style="Accent.TButton",
         )
-        self.tutorial_button.grid(row=0, column=1, rowspan=2, sticky="ne", padx=(12, 0))
-
-        io_card = ttk.Frame(main, style="Card.TFrame", padding=(20, 16))
-        io_card.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(12, 16))
-        io_card.columnconfigure(1, weight=1)
-        io_card.columnconfigure(4, weight=1)
-
-        ttk.Label(io_card, text="Eingabeordner", style="Section.TLabel").grid(
-            row=1, column=0, sticky="w", pady=(12, 0)
-        )
-        self.input_entry = ttk.Entry(io_card, textvariable=self.input_var, width=32)
-        self.input_entry.grid(
-            row=1,
-            column=1,
-            sticky="ew",
-            padx=(8, 8),
-            pady=(12, 0),
-        )
-        ttk.Button(io_card, text="Wählen…", command=self._choose_input).grid(
-            row=1, column=2, sticky="ew", pady=(12, 0)
-        )
-
-        ttk.Label(io_card, text="Ausgabeordner", style="Section.TLabel").grid(
-            row=1, column=3, sticky="w", pady=(12, 0), padx=(24, 0)
-        )
-        self.output_entry = ttk.Entry(io_card, textvariable=self.output_var, width=32)
-        self.output_entry.grid(
-            row=1,
-            column=4,
-            sticky="ew",
-            padx=(8, 8),
-            pady=(12, 0),
-        )
-        ttk.Button(io_card, text="Wählen…", command=self._choose_output).grid(
-            row=1, column=5, sticky="ew", pady=(12, 0)
-        )
+        self.tutorial_button.grid(row=0, column=2, rowspan=2, sticky="ne", padx=(12, 0))
 
         list_frame = ttk.Frame(main, style="Card.TFrame", padding=20)
-        list_frame.grid(row=2, column=0, sticky="nswe")
+        list_frame.grid(row=1, column=0, sticky="nswe", pady=(16, 0))
         list_frame.columnconfigure(0, weight=1)
         list_frame.rowconfigure(1, weight=1)
         ttk.Label(list_frame, text="Bilder & Videos", style="Heading.TLabel").grid(row=0, column=0, sticky="w")
@@ -422,19 +420,33 @@ class Application(tk.Tk):
         self.listbox.configure(yscrollcommand=scrollbar.set)
 
         preview = ttk.Frame(main, style="Card.TFrame", padding=20)
-        preview.grid(row=2, column=1, sticky="nsew", padx=(16, 0))
+        preview.grid(row=1, column=1, sticky="nsew", padx=(16, 0), pady=(16, 0))
         preview.columnconfigure(0, weight=0)
         preview.columnconfigure(1, weight=1)
         preview.rowconfigure(1, weight=1)
 
+        settings_header = ttk.Frame(preview)
+        settings_header.grid(row=0, column=0, sticky="w", padx=(0, 12))
+        ttk.Label(settings_header, text="Einstellungen", style="Heading.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        self._settings_toggle_button = ttk.Button(
+            settings_header,
+            text="Einklappen",
+            command=self._toggle_settings_panel,
+            width=12,
+        )
+        self._settings_toggle_button.grid(row=0, column=1, sticky="w", padx=(12, 0))
+
         ttk.Label(preview, text="Vorschau", style="Heading.TLabel").grid(
-            row=0, column=0, columnspan=2, sticky="w"
+            row=0, column=1, sticky="w"
         )
 
         controls_container = ttk.Frame(preview)
         controls_container.grid(row=1, column=0, sticky="nsw", pady=(12, 0), padx=(0, 12))
         controls_container.columnconfigure(0, weight=1)
         controls_container.rowconfigure(0, weight=1)
+        self._settings_container = controls_container
 
         controls_canvas = tk.Canvas(
             controls_container,
@@ -677,7 +689,7 @@ class Application(tk.Tk):
 
         self._create_loading_overlay(preview)
         output = ttk.Frame(main, style="Card.TFrame", padding=20)
-        output.grid(row=2, column=2, sticky="nsw", padx=(16, 0))
+        output.grid(row=1, column=2, sticky="nsw", padx=(16, 0), pady=(16, 0))
         output.columnconfigure(0, weight=1)
         output.rowconfigure(1, weight=1)
         ttk.Label(output, text="Ausgabe", style="Heading.TLabel").grid(row=0, column=0, sticky="w")
@@ -705,7 +717,7 @@ class Application(tk.Tk):
         )
 
         bottom = ttk.Frame(main)
-        bottom.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(16, 0))
+        bottom.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(16, 0))
         bottom.columnconfigure(0, weight=1)
 
         ttk.Label(bottom, textvariable=self.progress_var, style="Status.TLabel").grid(row=0, column=0, sticky="w")
@@ -723,6 +735,29 @@ class Application(tk.Tk):
         self._set_controls_enabled(False)
         self._refresh_output_list()
         self._refresh_legend_state()
+        self._update_settings_toggle_button()
+
+    def _toggle_settings_panel(self) -> None:
+        self._set_settings_collapsed(not self._settings_collapsed)
+
+    def _set_settings_collapsed(self, collapsed: bool) -> None:
+        if self._settings_collapsed == collapsed:
+            return
+        self._settings_collapsed = collapsed
+        container = self._settings_container
+        if container is not None:
+            if collapsed:
+                container.grid_remove()
+            else:
+                container.grid()
+        self._update_settings_toggle_button()
+        self.update_idletasks()
+
+    def _update_settings_toggle_button(self) -> None:
+        if self._settings_toggle_button is None:
+            return
+        text = "Ausklappen" if self._settings_collapsed else "Einklappen"
+        self._settings_toggle_button.configure(text=text)
 
     def _create_loading_overlay(self, parent: tk.Widget) -> None:
         overlay = tk.Frame(parent, background=self._card_background, bd=0, highlightthickness=0)
@@ -1440,23 +1475,41 @@ class Application(tk.Tk):
     # ------------------------------------------------------------------
     # Memory-Minispiel für die Wartezeit
     # ------------------------------------------------------------------
-    def _memory_grid_dimensions(self, total_cards: int) -> tuple[int, int]:
+    def _memory_grid_dimensions(
+        self,
+        total_cards: int,
+        *,
+        max_rows: Optional[int] = None,
+        max_cols: Optional[int] = None,
+    ) -> tuple[int, int]:
         if total_cards <= 0:
             return (1, 1)
-        best_rows, best_cols = 1, total_cards
-        best_diff = total_cards
-        limit = int(math.sqrt(total_cards))
-        for rows in range(1, limit + 1):
-            if total_cards % rows != 0:
+        if max_rows is None or max_rows <= 0:
+            max_rows = total_cards
+        if max_cols is None or max_cols <= 0:
+            max_cols = total_cards
+        best: Optional[tuple[int, int]] = None
+        best_score: Optional[tuple[int, int, int]] = None
+        for cols in range(1, max_cols + 1):
+            rows = math.ceil(total_cards / cols)
+            if rows > max_rows:
                 continue
-            cols = total_cards // rows
-            diff = abs(cols - rows)
-            if diff < best_diff:
-                best_rows, best_cols = rows, cols
-                best_diff = diff
-        if best_rows > best_cols:
-            best_rows, best_cols = best_cols, best_rows
-        return best_rows, best_cols
+            overflow = rows * cols - total_cards
+            diff = abs(rows - cols)
+            score = (overflow, diff, cols)
+            if best_score is None or score < best_score:
+                best_score = score
+                best = (rows, cols)
+        if best is None:
+            cols = min(max_cols, total_cards)
+            cols = max(1, cols)
+            rows = math.ceil(total_cards / cols)
+            rows = min(max_rows, max(1, rows))
+            best = (rows, cols)
+        rows, cols = best
+        if rows > cols:
+            rows, cols = cols, rows
+        return (max(1, rows), max(1, cols))
 
     def _create_memory_back_image(self, size: int) -> ImageTk.PhotoImage:
         size = max(32, size)
@@ -1500,37 +1553,86 @@ class Application(tk.Tk):
         )
         return ImageTk.PhotoImage(canvas)
 
-    def _start_memory_game(self, images: list[Path], token: object) -> None:
-        if not images:
+    def _start_memory_game(self, source_images: list[Path], token: object) -> None:
+        if not source_images:
             return
+        total_images = len(source_images)
+        game_images = list(source_images)
         self._close_memory_game()
         self._memory_flip_job = None
         self._hide_loading_overlay()
+        self._set_settings_collapsed(True)
         if self.canvas.winfo_manager():
             self.canvas.grid_remove()
+        self.update_idletasks()
         preview_parent = self.canvas.master
+        preview_parent.update_idletasks()
+        available_width = preview_parent.winfo_width()
+        available_height = preview_parent.winfo_height()
+        if available_width <= 1:
+            available_width = max(self.CANVAS_SIZE, self.winfo_width() - 200)
+        if available_height <= 1:
+            available_height = max(self.CANVAS_SIZE, self.winfo_height() - 200)
+        content_width = max(200, available_width - 40)
+        content_height = max(200, available_height - 40)
+        usable_width = max(160, content_width - 32)
+        info_space = 200
+        usable_height = max(self.MIN_MEMORY_CARD_SIZE + self.MEMORY_CARD_GAP, content_height - info_space)
+        card_unit = self.MIN_MEMORY_CARD_SIZE + self.MEMORY_CARD_GAP
+        max_cols = max(1, usable_width // card_unit)
+        max_rows = max(1, usable_height // card_unit)
+        max_cards = max_cols * max_rows
+        if max_cards < 2:
+            max_cards = 2
+        if max_cards % 2 != 0:
+            max_cards -= 1
+        if max_cards < 2:
+            max_cards = 2
+        if len(game_images) * 2 > max_cards:
+            max_pairs = max_cards // 2
+            max_pairs = max(1, max_pairs)
+            game_images = game_images[:max_pairs]
+        total_cards = len(game_images) * 2
+        rows, cols = self._memory_grid_dimensions(
+            total_cards, max_rows=max_rows, max_cols=max_cols
+        )
+        horizontal_size = max(
+            32, (usable_width // max(1, cols)) - self.MEMORY_CARD_GAP
+        )
+        vertical_size = max(
+            32, (usable_height // max(1, rows)) - self.MEMORY_CARD_GAP
+        )
+        cell_size = max(
+            self.MIN_MEMORY_CARD_SIZE,
+            min(180, horizontal_size, vertical_size),
+        )
         container = ttk.Frame(preview_parent, style="Card.TFrame", padding=16)
-        container.grid(row=1, column=1, sticky="n", pady=(12, 12))
+        container.grid(row=1, column=1, sticky="nsew", pady=(12, 12))
         container.columnconfigure(0, weight=1)
+        container.rowconfigure(2, weight=1)
         heading = ttk.Label(container, text="Memory", style="Heading.TLabel")
         heading.grid(row=0, column=0, sticky="w")
         sublabel = ttk.Label(
             container,
             text="Finde die Paare, während die Analyse läuft.",
             style="Body.TLabel",
-            wraplength=self.CANVAS_SIZE,
+            wraplength=usable_width,
         )
         sublabel.grid(row=1, column=0, sticky="w", pady=(4, 12))
+        if len(game_images) < total_images:
+            sublabel.configure(
+                text=(
+                    "Finde die Paare, während die Analyse läuft. "
+                    f"{len(game_images)} von {total_images} Bildern passen in das Spielfeld."
+                )
+            )
 
         game_frame = ttk.Frame(container)
         game_frame.grid(row=2, column=0, sticky="n")
-        total_cards = len(images) * 2
-        rows, cols = self._memory_grid_dimensions(total_cards)
-        max_dimension = max(1, max(rows, cols))
-        cell_size = max(56, min(180, self.CANVAS_SIZE // max_dimension))
+
         back_image = self._create_memory_back_image(cell_size)
         cards: list[MemoryCard] = []
-        card_paths = [path for path in images for _ in range(2)]
+        card_paths = [path for path in game_images for _ in range(2)]
         random.shuffle(card_paths)
         for index, path in enumerate(card_paths):
             face_image = self._create_memory_face_image(path, cell_size)
@@ -1554,13 +1656,13 @@ class Application(tk.Tk):
             button.image = back_image
             cards.append(MemoryCard(path=path, face_image=face_image, button=button))
 
-        progress_var = tk.StringVar(value=f"Analysefortschritt: 0/{len(images)}")
+        progress_var = tk.StringVar(value=f"Analysefortschritt: 0/{total_images}")
         progress_label = ttk.Label(container, textvariable=progress_var, style="Body.TLabel")
         progress_label.grid(row=3, column=0, sticky="w", pady=(16, 4))
         progress = ttk.Progressbar(
             container,
             mode="determinate",
-            maximum=max(1, len(images)),
+            maximum=max(1, total_images),
             value=0,
         )
         progress.grid(row=4, column=0, sticky="ew")
@@ -1573,7 +1675,7 @@ class Application(tk.Tk):
             progressbar=progress,
             progress_var=progress_var,
             back_image=back_image,
-            total=len(images),
+            total=total_images,
         )
 
     def _update_memory_progress(self, token: object, processed: int, total: int) -> None:
@@ -1704,6 +1806,7 @@ class Application(tk.Tk):
             except tk.TclError:
                 pass
             self._memory_container = None
+        self._set_settings_collapsed(False)
         if self.canvas.winfo_manager() == "":
             self.canvas.grid(row=1, column=1, sticky="n", pady=(12, 12))
 
