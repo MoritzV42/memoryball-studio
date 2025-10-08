@@ -520,10 +520,10 @@ class FaceCropper:
         width: int,
         height: int,
         *,
-        body_scale: float = 1.7,
-        face_margin: float = 0.12,
-        body_top_ratio: float = 0.2,
-        face_top_ratio: float = 0.08,
+        body_scale: float = 1.4,
+        face_margin: float = 0.02,
+        body_top_ratio: float = 0.1,
+        face_top_ratio: float = 0.05,
     ) -> Optional[tuple[CropBox, CropBox]]:
         relevant = self._filter_relevant_detections(detections, width, height)
         if not relevant:
@@ -539,14 +539,15 @@ class FaceCropper:
         largest_size = max(det.box.size for det in relevant)
         min_size = max(min_face_size, largest_size)
         max_size = max_crop_size(width, height)
+        max_circle = max(float(min(width, height)), min_size)
 
         span_width = max_x - min_x
         span_height = max_y - min_y
         base_span = max(span_width, span_height, largest_size)
-        face_size = clamp(base_span * (1.0 + face_margin), min_size, max_size)
-        body_size = clamp(face_size * body_scale, min_size, max_size)
+        face_size = clamp(base_span * (1.0 + face_margin), min_size, max_circle)
+        body_size = clamp(face_size * body_scale, min_size, max_circle)
 
-        fits_all = span_width <= max_size and span_height <= max_size
+        fits_all = span_width <= max_circle and span_height <= max_circle
 
         if not fits_all and len(relevant) >= 2:
             primary = relevant[0].box
@@ -558,7 +559,7 @@ class FaceCropper:
                 primary.x + primary.size,
                 primary.y,
                 primary.y + primary.size,
-                clamp(primary.size * body_scale, primary_min, max_size),
+                clamp(primary.size * body_scale, primary_min, max_circle),
                 width,
                 height,
                 body_top_ratio,
@@ -568,7 +569,7 @@ class FaceCropper:
                 secondary.x + secondary.size,
                 secondary.y,
                 secondary.y + secondary.size,
-                clamp(secondary.size * (1.0 + face_margin), secondary_min, max_size),
+                clamp(secondary.size * (1.0 + face_margin), secondary_min, max_circle),
                 width,
                 height,
                 face_top_ratio,

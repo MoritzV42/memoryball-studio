@@ -64,6 +64,8 @@ class Application(tk.Tk):
         self.title("MemoryBall Studio")
         self.geometry("960x640")
         self.minsize(900, 600)
+        self.attributes("-fullscreen", True)
+        self.bind("<Escape>", lambda _event: self.attributes("-fullscreen", False))
 
         self._configure_style()
 
@@ -71,6 +73,7 @@ class Application(tk.Tk):
         self.media_files: list[Path] = []
         self.image_files: list[Path] = []
         self.manual_crops: dict[Path, ManualCrop] = {}
+        self._auto_generated_paths: set[Path] = set()
         self._list_paths: list[Path] = []
         self._list_iids: list[str] = []
         self._thumbnail_cache: dict[Path, ImageTk.PhotoImage] = {}
@@ -102,6 +105,8 @@ class Application(tk.Tk):
         self._loading_spinner: Optional[ttk.Progressbar] = None
         self._loading_message_var = tk.StringVar(value="")
         self._auto_task_token: Optional[object] = None
+        self._bulk_auto_token: Optional[object] = None
+        self._bulk_auto_thread: Optional[threading.Thread] = None
 
         self.input_var = tk.StringVar()
         self.output_var = tk.StringVar()
@@ -481,9 +486,17 @@ class Application(tk.Tk):
         add_dpad_button("↓", 2, 1, lambda: self._adjust_offset(0.0, self.OFFSET_STEP))
         add_dpad_button("−", 2, 2, lambda: self._adjust_zoom(-self.ZOOM_STEP))
 
+        compact_controls.columnconfigure(1, weight=1)
         auto_button = ttk.Button(compact_controls, text="Auto", command=self._reset_crop_to_auto)
         auto_button.grid(row=1, column=0, sticky="w", pady=(8, 0))
         self._compact_control_buttons.append(auto_button)
+        analyze_all_button = ttk.Button(
+            compact_controls,
+            text="Alle Bilder analysieren",
+            command=self._analyze_all_images,
+        )
+        analyze_all_button.grid(row=1, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+        self._compact_control_buttons.append(analyze_all_button)
 
         nav = ttk.Frame(controls_column)
         nav.grid(row=2, column=0, sticky="w", pady=(16, 0))
@@ -579,13 +592,23 @@ class Application(tk.Tk):
         self.y_scale.configure(length=slider_length)
         self.y_scale.grid(row=2, column=1, sticky="w", padx=(6, 6), pady=(6, 0))
 
-        ttk.Button(sliders, text="Auto", command=self._reset_crop_to_auto).grid(
-            row=0,
-            column=2,
-            rowspan=3,
-            sticky="ns",
-            padx=(12, 0),
+        button_column = ttk.Frame(sliders)
+        button_column.grid(row=0, column=2, rowspan=3, sticky="nsw", padx=(12, 0))
+        auto_slider_button = ttk.Button(
+            button_column, text="Auto", command=self._reset_crop_to_auto
         )
+        auto_slider_button.grid(
+            row=0,
+            column=0,
+            sticky="ew",
+        )
+        analyze_slider_button = ttk.Button(
+            button_column,
+            text="Alle Bilder analysieren",
+            command=self._analyze_all_images,
+        )
+        analyze_slider_button.grid(row=1, column=0, sticky="ew", pady=(6, 0))
+        self._compact_control_buttons.extend([auto_slider_button, analyze_slider_button])
 
         ttk.Label(controls_column, textvariable=self.crop_info_var, style="Section.TLabel").grid(
             row=6,
@@ -1153,6 +1176,7 @@ class Application(tk.Tk):
         default_output = self._default_output_for(self.input_path)
         self.output_var.set(str(default_output))
         self.manual_crops.clear()
+        self._auto_generated_paths.clear()
         self._load_media_files()
         self._refresh_output_list()
 
@@ -1246,8 +1270,10 @@ class Application(tk.Tk):
             self.current_image = img.copy()
         manual = self.manual_crops.get(path)
         if manual is None:
-            self._start_auto_detection(path, message="Analysiere Bild…")
-            return
+            assert self.current_image is not None
+            manual = self._default_manual_for_image(self.current_image)
+            self.manual_crops[path] = manual
+            self._auto_generated_paths.discard(path)
         else:
             manual = self._normalize_manual(manual)
         self.manual_crops[path] = manual
@@ -1280,6 +1306,13 @@ class Application(tk.Tk):
         start = self._normalize_crop_box(manual.start, width, height, overflow=overflow)
         end = self._normalize_crop_box(manual.end, width, height, overflow=overflow)
         return ManualCrop(start=start, end=end)
+
+    def _default_manual_for_image(self, image: Image.Image) -> ManualCrop:
+        width, height = image.size
+        size = float(min(width, height))
+        base = CropBox((width - size) / 2, (height - size) / 2, size)
+        manual = ManualCrop(start=base, end=base)
+        return self._normalize_manual_for_image(image, manual, overflow=0.0)
 
     def _compute_auto_manual_for_image(
         self,
@@ -1347,7 +1380,8 @@ class Application(tk.Tk):
             return
         manual = self._normalize_manual(result)
         self.manual_crops[path] = manual
-        self._apply_manual_to_controls(manual)
+        self._auto_generated_paths.add(path)
+        self._apply_manual_to_controls(manual, auto_generated=True)
         self._set_controls_enabled(True)
         self._refresh_selected_button_state()
         self._update_navigation_state()
@@ -1359,6 +1393,121 @@ class Application(tk.Tk):
         options = self._current_processing_options()
         cropper = self._get_preview_cropper()
         return self._compute_auto_manual_for_image(self.current_image, options, cropper)
+
+    def _analyze_all_images(self) -> None:
+        if not self.image_files:
+            messagebox.showinfo("Analyse", "Keine Bilder zum Analysieren gefunden.")
+            return
+        if self.input_path is None:
+            messagebox.showinfo("Analyse", "Bitte zuerst einen Eingabeordner wählen.")
+            return
+        if self._bulk_auto_token is not None:
+            messagebox.showinfo("Analyse", "Eine Analyse läuft bereits.")
+            return
+        options = self._current_processing_options()
+        cropper = self._get_preview_cropper()
+        if cropper is None:
+            messagebox.showerror(
+                "Analyse",
+                "Gesichtserkennung ist nicht verfügbar. Bitte installiere die erforderlichen Abhängigkeiten.",
+            )
+            return
+
+        images = list(self.image_files)
+        total = len(images)
+        token = object()
+        self._bulk_auto_token = token
+        self._show_loading_overlay("Analysiere Bilder…")
+        self._set_controls_enabled(False)
+        self._update_bulk_auto_progress(token, 0, total)
+
+        def worker() -> None:
+            results: dict[Path, ManualCrop] = {}
+            errors: dict[Path, Exception] = {}
+            for index, path in enumerate(images, start=1):
+                try:
+                    with Image.open(path) as img:
+                        image = img.copy()
+                except Exception as exc:
+                    errors[path] = exc
+                else:
+                    try:
+                        manual = self._compute_auto_manual_for_image(image, options, cropper)
+                    except Exception as exc:  # pragma: no cover - GUI feedback
+                        errors[path] = exc
+                    else:
+                        results[path] = manual
+                finally:
+                    self.after(
+                        0,
+                        lambda idx=index, total=total: self._update_bulk_auto_progress(
+                            token, idx, total
+                        ),
+                    )
+            self.after(
+                0,
+                lambda: self._finish_bulk_auto(token, results, errors, total),
+            )
+
+        thread = threading.Thread(target=worker, daemon=True)
+        self._bulk_auto_thread = thread
+        thread.start()
+
+    def _update_bulk_auto_progress(self, token: object, processed: int, total: int) -> None:
+        if token != self._bulk_auto_token:
+            return
+        message = f"Analysiere Bilder… {processed}/{total}"
+        self.progress_var.set(message)
+        self._loading_message_var.set(message)
+
+    def _finish_bulk_auto(
+        self,
+        token: object,
+        results: dict[Path, ManualCrop],
+        errors: dict[Path, Exception],
+        total: int,
+    ) -> None:
+        if token != self._bulk_auto_token:
+            return
+        self._bulk_auto_token = None
+        self._bulk_auto_thread = None
+        self._hide_loading_overlay()
+        self._set_controls_enabled(True)
+
+        applied = 0
+        retained = 0
+        for path, manual in results.items():
+            existing = self.manual_crops.get(path)
+            if existing is not None and path not in self._auto_generated_paths:
+                retained += 1
+                continue
+            self.manual_crops[path] = manual
+            self._auto_generated_paths.add(path)
+            if path == self.current_path and self.current_image is not None:
+                self._apply_manual_to_controls(manual, auto_generated=True)
+            applied += 1
+
+        if errors:
+            failed = len(errors)
+            sample_path, sample_error = next(iter(errors.items()))
+            message = (
+                f"{applied} von {total} Bildern analysiert – {failed} fehlgeschlagen."
+            )
+            self.progress_var.set(message)
+            messagebox.showwarning(
+                "Analyse",
+                "Nicht alle Bilder konnten automatisch analysiert werden. "
+                f"Beispiel: {sample_path.name}\n\n{sample_error}",
+            )
+        else:
+            message = f"{applied} von {total} Bildern analysiert."
+            if retained:
+                message += " Manuell angepasste Bilder wurden beibehalten."
+            self.progress_var.set(message)
+
+        self._refresh_selected_button_state()
+        self._refresh_crop_buttons()
+        self._refresh_legend_state()
 
     def _scale_crop(self, crop: CropBox, factor: float, width: int, height: int) -> CropBox:
         factor = clamp(factor, 0.01, 10.0)
@@ -1438,18 +1587,30 @@ class Application(tk.Tk):
                 f"Ausschnitt: {int(end.size)}px – Position ({int(end.x)}, {int(end.y)})"
             )
 
-    def _update_current_manual(self, manual: ManualCrop, sync_controls: bool = True) -> None:
+    def _update_current_manual(
+        self,
+        manual: ManualCrop,
+        *,
+        sync_controls: bool = True,
+        auto_generated: Optional[bool] = None,
+    ) -> None:
         if self.current_image is None or self.current_path is None:
             return
         normalized = self._normalize_manual(manual)
         self.manual_crops[self.current_path] = normalized
+        if auto_generated is True:
+            self._auto_generated_paths.add(self.current_path)
+        elif auto_generated is False:
+            self._auto_generated_paths.discard(self.current_path)
         if sync_controls:
             self._sync_sliders_with_active(normalized)
         self._render_preview(normalized)
         self._update_position_label()
 
-    def _apply_manual_to_controls(self, manual: ManualCrop) -> None:
-        self._update_current_manual(manual, sync_controls=True)
+    def _apply_manual_to_controls(
+        self, manual: ManualCrop, *, auto_generated: Optional[bool] = None
+    ) -> None:
+        self._update_current_manual(manual, sync_controls=True, auto_generated=auto_generated)
 
     def _update_motion_direction_state(self) -> None:
         if self.motion_enabled_var.get():
@@ -1552,7 +1713,11 @@ class Application(tk.Tk):
         else:
             start = new_crop
             end = new_crop
-        self._update_current_manual(ManualCrop(start=start, end=end), sync_controls=True)
+        self._update_current_manual(
+            ManualCrop(start=start, end=end),
+            sync_controls=True,
+            auto_generated=False,
+        )
 
     def _canvas_rect(self, crop: CropBox) -> tuple[float, float, float, float]:
         offset_x, offset_y = self._canvas_offset
@@ -1885,7 +2050,11 @@ class Application(tk.Tk):
         if not self.motion_enabled_var.get():
             start = new_crop
             end = new_crop
-        self._update_current_manual(ManualCrop(start=start, end=end), sync_controls=True)
+        self._update_current_manual(
+            ManualCrop(start=start, end=end),
+            sync_controls=True,
+            auto_generated=False,
+        )
 
     def _on_canvas_release(self, _event: tk.Event) -> None:
         self._drag_state = None
