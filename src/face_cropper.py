@@ -14,6 +14,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - better error hint for W
     ) from exc
 import numpy as np
 
+
 _IMPORT_ERROR: Optional[Exception] = None
 try:  # pragma: no cover - optional dependency check
     import mediapipe as mp
@@ -69,6 +70,9 @@ class FaceCropper:
         self._use_mediapipe = mp is not None
         self._face_detection: Optional["mp.solutions.face_detection.FaceDetection"] = None
         self._cascade: Optional[cv2.CascadeClassifier] = None
+        self._profile_cascade: Optional[cv2.CascadeClassifier] = None
+        self._upper_body_cascade: Optional[cv2.CascadeClassifier] = None
+        self._full_body_cascade: Optional[cv2.CascadeClassifier] = None
         self._hog: Optional[cv2.HOGDescriptor] = None
         if self._use_mediapipe:
             self._face_detection = mp.solutions.face_detection.FaceDetection(
@@ -86,6 +90,9 @@ class FaceCropper:
                 if mp is None:
                     raise RuntimeError(message) from _IMPORT_ERROR
                 raise RuntimeError(message)
+            self._profile_cascade = self._load_optional_cascade("haarcascade_profileface.xml")
+            self._upper_body_cascade = self._load_optional_cascade("haarcascade_upperbody.xml")
+            self._full_body_cascade = self._load_optional_cascade("haarcascade_fullbody.xml")
 
         self._hog = cv2.HOGDescriptor()
         self._hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
@@ -98,6 +105,13 @@ class FaceCropper:
         if self._use_mediapipe and self._face_detection is not None:
             with contextlib.suppress(Exception):
                 self._face_detection.close()
+
+    def _load_optional_cascade(self, filename: str) -> Optional[cv2.CascadeClassifier]:
+        path = cv2.data.haarcascades + filename
+        cascade = cv2.CascadeClassifier(path)
+        if cascade.empty():  # pragma: no cover - optional assets may be missing
+            return None
+        return cascade
 
     def _mp_box_to_crop(
         self,
@@ -138,14 +152,47 @@ class FaceCropper:
         assert self._cascade is not None
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         gray = cv2.equalizeHist(gray)
-        faces = self._cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, flags=cv2.CASCADE_SCALE_IMAGE)
-        for (x, y, width, height) in faces:
-            size = max(width, height)
-            size = max(size, self.min_face * min(w, h))
-            x_adj = clamp(x + width / 2 - size / 2, 0, max(0, w - size))
-            y_adj = clamp(y + height / 2 - size / 2, 0, max(0, h - size))
-            base = CropBox(x=x_adj, y=y_adj, size=size)
-            detections.append(DetectionResult(score=1.0, box=self._circle_aligned_box(base, w, h)))
+
+        def run_detector(
+            cascade: Optional[cv2.CascadeClassifier],
+            *,
+            weight: float,
+            scale_factor: float = 1.1,
+            min_neighbors: int = 5,
+            flip: bool = False,
+        ) -> None:
+            if cascade is None:
+                return
+            source = gray
+            if flip:
+                source = cv2.flip(gray, 1)
+            results = cascade.detectMultiScale(
+                source,
+                scaleFactor=scale_factor,
+                minNeighbors=min_neighbors,
+                flags=cv2.CASCADE_SCALE_IMAGE,
+            )
+            for (x, y, width, height) in results:
+                if flip:
+                    x = w - (x + width)
+                size = max(width, height)
+                min_size = self.min_face * min(w, h)
+                size = max(size, min_size)
+                cx = x + width / 2
+                cy = y + height / 2
+                x_adj = clamp(cx - size / 2, 0, max(0, w - size))
+                y_adj = clamp(cy - size / 2, 0, max(0, h - size))
+                base = CropBox(x=x_adj, y=y_adj, size=size)
+                score = min(1.0, weight + min(0.4, size / max(1.0, min(w, h)) * 0.4))
+                detections.append(
+                    DetectionResult(score=score, box=self._circle_aligned_box(base, w, h))
+                )
+
+        run_detector(self._cascade, weight=0.95)
+        run_detector(self._profile_cascade, weight=0.75)
+        run_detector(self._profile_cascade, weight=0.75, flip=True)
+        run_detector(self._upper_body_cascade, weight=0.65, scale_factor=1.05, min_neighbors=3)
+        run_detector(self._full_body_cascade, weight=0.6, scale_factor=1.02, min_neighbors=3)
         return detections
 
     def _detect_people(self, image: np.ndarray) -> List[DetectionResult]:
@@ -156,15 +203,21 @@ class FaceCropper:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         rects, weights = self._hog.detectMultiScale(gray, winStride=(8, 8), padding=(8, 8), scale=1.05)
         min_size = self.min_face * min(w, h)
-        for (x, y, width, height), score in zip(rects, weights):
+        center_x = w / 2
+        center_y = h / 2
+        max_radius = math.hypot(center_x, center_y)
+        for (x, y, width, height), raw_score in zip(rects, weights):
             size = max(width, height, min_size)
             cx = x + width / 2
             cy = y + height / 2
             x_adj = clamp(cx - size / 2, 0, max(0, w - size))
             y_adj = clamp(cy - size / 2, 0, max(0, h - size))
             base = CropBox(x=x_adj, y=y_adj, size=size)
+            distance = math.hypot(cx - center_x, cy - center_y)
+            center_bonus = max(0.0, 1.0 - distance / max(1.0, max_radius))
+            score = float(max(0.2, min(1.0, raw_score * 0.7 + center_bonus * 0.5)))
             detections.append(
-                DetectionResult(score=float(max(0.0, min(score, 1.0))), box=self._circle_aligned_box(base, w, h))
+                DetectionResult(score=score, box=self._circle_aligned_box(base, w, h))
             )
         return detections
 
@@ -191,7 +244,10 @@ class FaceCropper:
             return detections
         contours = sorted(contours, key=cv2.contourArea, reverse=True)
         image_area = float(w * h)
-        for contour in contours[:3]:
+        center_x = w / 2
+        center_y = h / 2
+        max_radius = math.hypot(center_x, center_y)
+        for contour in contours[:5]:
             area = cv2.contourArea(contour)
             if area < image_area * 0.02:
                 continue
@@ -202,8 +258,45 @@ class FaceCropper:
             x_adj = clamp(cx - size / 2, 0, max(0, w - size))
             y_adj = clamp(cy - size / 2, 0, max(0, h - size))
             base = CropBox(x=x_adj, y=y_adj, size=max(size, self.min_face * min(w, h)))
-            detections.append(DetectionResult(score=0.35, box=self._circle_aligned_box(base, w, h)))
+            distance = math.hypot(cx - center_x, cy - center_y)
+            center_bonus = max(0.0, 1.0 - distance / max(1.0, max_radius))
+            size_ratio = min(1.0, size / max(1.0, min(w, h)))
+            interest = 0.25 + center_bonus * 0.5 + size_ratio * 0.35
+            detections.append(
+                DetectionResult(score=float(min(0.9, interest)), box=self._circle_aligned_box(base, w, h))
+            )
         return detections
+
+    @staticmethod
+    def _square_iou(a: CropBox, b: CropBox) -> float:
+        x1 = max(a.x, b.x)
+        y1 = max(a.y, b.y)
+        x2 = min(a.x + a.size, b.x + b.size)
+        y2 = min(a.y + a.size, b.y + b.size)
+        if x2 <= x1 or y2 <= y1:
+            return 0.0
+        intersection = (x2 - x1) * (y2 - y1)
+        union = a.size * a.size + b.size * b.size - intersection
+        if union <= 0:
+            return 0.0
+        return intersection / union
+
+    def _merge_detections(self, detections: List[DetectionResult]) -> List[DetectionResult]:
+        if not detections:
+            return []
+        merged: List[DetectionResult] = []
+        for det in sorted(detections, key=lambda d: (d.score, d.box.size), reverse=True):
+            duplicate = False
+            for kept in merged:
+                if self._square_iou(det.box, kept.box) >= 0.4:
+                    duplicate = True
+                    if det.score > kept.score:
+                        kept.score = det.score
+                        kept.box = det.box
+                    break
+            if not duplicate:
+                merged.append(DetectionResult(score=det.score, box=CropBox(det.box.x, det.box.y, det.box.size)))
+        return merged
 
     def _circle_aligned_box(self, box: CropBox, width: int, height: int) -> CropBox:
         expanded = expand_crop_for_circle(box)
@@ -216,31 +309,44 @@ class FaceCropper:
         y = clamp(center_y - size / 2, 0.0, max(0.0, height - size))
         return CropBox(x=x, y=y, size=size)
 
-    def _filter_relevant_detections(self, detections: List[DetectionResult]) -> List[DetectionResult]:
+    def _filter_relevant_detections(
+        self,
+        detections: List[DetectionResult],
+        width: int,
+        height: int,
+    ) -> List[DetectionResult]:
         if not detections:
             return []
         max_size = max((det.box.size for det in detections), default=0.0)
         if max_size <= 0:
             return []
-        size_threshold = max_size * 0.45
+
+        def center_factor(det: DetectionResult) -> float:
+            cx = det.box.x + det.box.size / 2
+            cy = det.box.y + det.box.size / 2
+            norm_dx = abs(cx - width / 2) / max(width / 2, 1.0)
+            norm_dy = abs(cy - height / 2) / max(height / 2, 1.0)
+            return max(0.0, 1.0 - 0.5 * (norm_dx + norm_dy))
+
+        size_threshold = max_size * 0.4
         filtered = [
             det
             for det in detections
-            if det.box.size >= size_threshold or det.score >= 0.6
+            if det.box.size >= size_threshold or det.score >= 0.6 or center_factor(det) >= 0.65
         ]
-        if len(filtered) >= 2:
-            return sorted(filtered, key=lambda det: det.box.size, reverse=True)[:5]
 
-        sorted_by_size = sorted(detections, key=lambda det: det.box.size, reverse=True)
-        if not sorted_by_size:
-            return []
+        def priority(det: DetectionResult) -> float:
+            size_ratio = det.box.size / max(1.0, max_size)
+            return det.score * 0.6 + center_factor(det) * 0.3 + size_ratio * 0.4
 
-        result: List[DetectionResult] = [filtered[0] if filtered else sorted_by_size[0]]
-        if len(sorted_by_size) >= 2:
-            candidate = sorted_by_size[1]
-            if candidate.box.size >= max_size * 0.35 or candidate.score >= 0.55:
-                result.append(candidate)
-        return result
+        ranked_pool = filtered if filtered else detections
+        ranked = sorted(ranked_pool, key=priority, reverse=True)[:5]
+
+        if len(ranked) == 1 and len(detections) > 1:
+            alt = max((det for det in detections if det not in ranked), key=priority, default=None)
+            if alt is not None:
+                ranked.append(alt)
+        return ranked
 
     def combine_detections(
         self,
@@ -248,7 +354,7 @@ class FaceCropper:
         width: int,
         height: int,
     ) -> Optional[CropBox]:
-        relevant = self._filter_relevant_detections(detections)
+        relevant = self._filter_relevant_detections(detections, width, height)
         if len(relevant) < 2:
             return None
         min_x = min(det.box.x for det in relevant)
@@ -297,7 +403,7 @@ class FaceCropper:
             detections = extra_people
         if not detections:
             detections = self._detect_saliency(image)
-        return detections
+        return self._merge_detections(detections)
 
     def select_detection(self, detections: List[DetectionResult], width: int, height: int) -> Optional[DetectionResult]:
         if not detections:
@@ -419,7 +525,7 @@ class FaceCropper:
         body_top_ratio: float = 0.2,
         face_top_ratio: float = 0.08,
     ) -> Optional[tuple[CropBox, CropBox]]:
-        relevant = self._filter_relevant_detections(detections)
+        relevant = self._filter_relevant_detections(detections, width, height)
         if not relevant:
             return None
         relevant = sorted(relevant, key=lambda det: det.box.size, reverse=True)
