@@ -369,17 +369,12 @@ class Application(tk.Tk):
         list_frame.rowconfigure(1, weight=1)
         ttk.Label(list_frame, text="Bilder & Videos", style="Heading.TLabel").grid(row=0, column=0, sticky="w")
 
-        self.listbox = tk.Listbox(list_frame, exportselection=False, height=20)
-        self.listbox.grid(row=1, column=0, sticky="nswe", pady=(6, 0))
-        self.listbox.bind("<<ListboxSelect>>", lambda _event: self._on_listbox_select())
-        self.listbox.configure(
-            background="#0a1326",
-            foreground="#ecf0ff",
-            borderwidth=0,
-            highlightthickness=0,
-            selectbackground="#3f71ff",
-            selectforeground="#ffffff",
-            activestyle="none",
+        self.listbox = ttk.Treeview(
+            list_frame,
+            show="tree",
+            selectmode="browse",
+            height=20,
+            style="Media.Treeview",
         )
         self.listbox.grid(row=1, column=0, sticky="nswe", pady=(6, 0))
         self.listbox.column("#0", anchor="w", stretch=True)
