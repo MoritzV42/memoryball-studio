@@ -12,7 +12,16 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Optional
 
-from PIL import Image, ImageTk
+from PIL import Image, ImageDraw, ImageTk
+try:  # Pillow 9.1+
+    from PIL import ImageOps
+except ImportError:  # pragma: no cover - fallback for very old Pillow
+    ImageOps = None  # type: ignore[assignment]
+
+try:  # Pillow 9.1+
+    RESAMPLE_LANCZOS = Image.Resampling.LANCZOS  # type: ignore[attr-defined]
+except AttributeError:  # pragma: no cover - Pillow < 9.1
+    RESAMPLE_LANCZOS = Image.LANCZOS
 
 from .face_cropper import FaceCropper
 from .image_pipeline import determine_crop_box, determine_motion_manual, process_image
@@ -62,6 +71,9 @@ class Application(tk.Tk):
         self.image_files: list[Path] = []
         self.manual_crops: dict[Path, ManualCrop] = {}
         self._list_paths: list[Path] = []
+        self._list_iids: list[str] = []
+        self._thumbnail_cache: dict[Path, ImageTk.PhotoImage] = {}
+        self._video_thumbnail: Optional[ImageTk.PhotoImage] = None
         self.current_path: Optional[Path] = None
         self.current_image: Optional[Image.Image] = None
         self._tk_image: Optional[ImageTk.PhotoImage] = None
@@ -185,6 +197,19 @@ class Application(tk.Tk):
             foreground="#f5f7fa",
         )
         style.map("Modern.TSpinbox", fieldbackground=[("readonly", card_background)])
+        style.configure(
+            "Media.Treeview",
+            background="#0b0f1c",
+            fieldbackground="#0b0f1c",
+            foreground="#f5f7fa",
+            bordercolor="#0b0f1c",
+            rowheight=56,
+        )
+        style.map(
+            "Media.Treeview",
+            background=[("selected", "#1f6feb")],
+            foreground=[("selected", "#ffffff")],
+        )
 
     def _current_detection_mode(self) -> str:
         return self._detection_value_by_label.get(
@@ -275,18 +300,16 @@ class Application(tk.Tk):
         list_frame.rowconfigure(1, weight=1)
         ttk.Label(list_frame, text="Bilder & Videos", style="Heading.TLabel").grid(row=0, column=0, sticky="w")
 
-        self.listbox = tk.Listbox(list_frame, exportselection=False, height=20)
-        self.listbox.grid(row=1, column=0, sticky="nswe", pady=(6, 0))
-        self.listbox.bind("<<ListboxSelect>>", lambda _event: self._on_listbox_select())
-        self.listbox.configure(
-            background="#0b0f1c",
-            foreground="#f5f7fa",
-            borderwidth=0,
-            highlightthickness=0,
-            selectbackground="#1f6feb",
-            selectforeground="#ffffff",
-            activestyle="none",
+        self.listbox = ttk.Treeview(
+            list_frame,
+            show="tree",
+            selectmode="browse",
+            height=20,
+            style="Media.Treeview",
         )
+        self.listbox.grid(row=1, column=0, sticky="nswe", pady=(6, 0))
+        self.listbox.column("#0", anchor="w", stretch=True)
+        self.listbox.bind("<<TreeviewSelect>>", lambda _event: self._on_listbox_select())
 
         scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.listbox.yview)
         scrollbar.grid(row=1, column=1, sticky="ns")
@@ -752,7 +775,7 @@ class Application(tk.Tk):
             self.convert_selected_button.state(["disabled"])
         self._refresh_crop_buttons()
         self._refresh_legend_state()
-        self.listbox.configure(state="normal")
+        self.listbox.state(["!disabled"])
 
     def _refresh_selected_button_state(self) -> None:
         if self._conversion_active:
@@ -762,6 +785,71 @@ class Application(tk.Tk):
             self.convert_selected_button.state(["!disabled"])
         else:
             self.convert_selected_button.state(["disabled"])
+
+    def _thumbnail_for(self, path: Path) -> ImageTk.PhotoImage:
+        if is_image(path):
+            thumbnail = self._thumbnail_cache.get(path)
+            if thumbnail is None:
+                thumbnail = self._create_image_thumbnail(path)
+                self._thumbnail_cache[path] = thumbnail
+            return thumbnail
+        return self._get_video_thumbnail()
+
+    def _create_image_thumbnail(self, path: Path, size: int = 48) -> ImageTk.PhotoImage:
+        border_color = "#1b2032"
+        background_color = "#0b0f1c"
+        max_content = size - 8
+        content_size = (max_content, max_content)
+        try:
+            with Image.open(path) as img:
+                image = img.convert("RGB")
+        except Exception:
+            image = Image.new("RGB", content_size, "#2a3149")
+        else:
+            if ImageOps is not None:
+                image = ImageOps.contain(image, content_size, RESAMPLE_LANCZOS)
+            else:  # pragma: no cover - fallback for older Pillow
+                image.thumbnail(content_size, RESAMPLE_LANCZOS)
+        thumb = Image.new("RGB", (size, size), background_color)
+        draw = ImageDraw.Draw(thumb)
+        draw.rectangle((0, 0, size - 1, size - 1), outline=border_color)
+        offset = ((size - image.width) // 2, (size - image.height) // 2)
+        thumb.paste(image, offset)
+        return ImageTk.PhotoImage(thumb)
+
+    def _get_video_thumbnail(self, size: int = 48) -> ImageTk.PhotoImage:
+        if self._video_thumbnail is None:
+            background_color = "#111624"
+            accent = self._accent_color
+            thumb = Image.new("RGB", (size, size), background_color)
+            draw = ImageDraw.Draw(thumb)
+            draw.rectangle((0, 0, size - 1, size - 1), outline=accent)
+            triangle = [
+                (size // 2 - 6, size // 2 - 9),
+                (size // 2 - 6, size // 2 + 9),
+                (size // 2 + 8, size // 2),
+            ]
+            draw.polygon(triangle, fill=accent)
+            self._video_thumbnail = ImageTk.PhotoImage(thumb)
+        return self._video_thumbnail
+
+    def _select_list_index(self, index: int) -> None:
+        if index < 0 or index >= len(self._list_iids):
+            return
+        iid = self._list_iids[index]
+        self.listbox.selection_set(iid)
+        self.listbox.focus(iid)
+        self.listbox.see(iid)
+
+    def _list_selection_indices(self) -> list[int]:
+        indices: list[int] = []
+        for iid in self.listbox.selection():
+            try:
+                position = self._list_iids.index(iid)
+            except ValueError:
+                continue
+            indices.append(position)
+        return indices
 
     def _default_output_for(self, path: Path) -> Path:
         return path.parent / f"Converted {path.name}"
@@ -817,8 +905,11 @@ class Application(tk.Tk):
     def _load_media_files(self) -> None:
         self.media_files.clear()
         self.image_files.clear()
-        self.listbox.delete(0, tk.END)
+        for item in self.listbox.get_children():
+            self.listbox.delete(item)
         self._list_paths.clear()
+        self._list_iids.clear()
+        self._thumbnail_cache.clear()
         self.canvas.delete("all")
         self.current_path = None
         self.current_image = None
@@ -835,17 +926,19 @@ class Application(tk.Tk):
         self.media_files = files
         for media in self.media_files:
             display = media.relative_to(self.input_path)
-            prefix = "🖼️ " if is_image(media) else "🎞️ "
-            self.listbox.insert(tk.END, f"{prefix}{display}")
+            index = len(self._list_paths)
+            iid = f"item-{index}"
+            thumbnail = self._thumbnail_for(media)
+            self.listbox.insert("", tk.END, iid=iid, text=str(display), image=thumbnail)
             self._list_paths.append(media)
+            self._list_iids.append(iid)
             if is_image(media):
                 self.image_files.append(media)
 
         if self.image_files:
             first_image = self.image_files[0]
             index = self._list_paths.index(first_image)
-            self.listbox.selection_set(index)
-            self.listbox.see(index)
+            self._select_list_index(index)
             self._on_listbox_select()
             video_count = len(self.media_files) - len(self.image_files)
             if video_count:
@@ -869,7 +962,7 @@ class Application(tk.Tk):
     def _on_listbox_select(self) -> None:
         if not self._list_paths:
             return
-        selection = self.listbox.curselection()
+        selection = self._list_selection_indices()
         if not selection:
             return
         index = selection[0]
@@ -1477,9 +1570,7 @@ class Application(tk.Tk):
             return
         next_path = self.image_files[index - 1]
         list_index = self._list_paths.index(next_path)
-        self.listbox.selection_clear(0, tk.END)
-        self.listbox.selection_set(list_index)
-        self.listbox.see(list_index)
+        self._select_list_index(list_index)
         self._load_preview(next_path)
 
     def _show_next_image(self) -> None:
@@ -1490,9 +1581,7 @@ class Application(tk.Tk):
             return
         next_path = self.image_files[index + 1]
         list_index = self._list_paths.index(next_path)
-        self.listbox.selection_clear(0, tk.END)
-        self.listbox.selection_set(list_index)
-        self.listbox.see(list_index)
+        self._select_list_index(list_index)
         self._load_preview(next_path)
 
     def _reset_crop_to_auto(self) -> None:
@@ -1592,7 +1681,7 @@ class Application(tk.Tk):
         if output_dir is None:
             messagebox.showerror("Fehler", "Bitte einen Ausgabeordner wählen oder eingeben.")
             return
-        selection = list(self.listbox.curselection())
+        selection = self._list_selection_indices()
         selected_paths: list[Path] = []
         for index in selection:
             try:
