@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+import random
 import subprocess
 import sys
 import threading
 import tkinter as tk
+from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable, Optional
@@ -41,6 +44,30 @@ from .utils import (
     setup_environment,
 )
 from .video_pipeline import process_video
+
+
+@dataclass
+class MemoryCard:
+    path: Path
+    face_image: ImageTk.PhotoImage
+    button: tk.Button
+    revealed: bool = False
+    matched: bool = False
+
+
+@dataclass
+class MemoryGameState:
+    frame: tk.Frame
+    cards: list[MemoryCard]
+    token: object
+    progressbar: ttk.Progressbar
+    progress_var: tk.StringVar
+    back_image: ImageTk.PhotoImage
+    total: int = 0
+    first_index: Optional[int] = None
+    lock: bool = False
+    completed: bool = False
+    analysis_done: bool = False
 
 
 class Application(tk.Tk):
@@ -95,10 +122,10 @@ class Application(tk.Tk):
         self._tutorial_index = -1
         self._tutorial_running = False
         self._tutorial_completed = self._load_tutorial_completed()
-        self._advanced_settings_visible = False
-        self._advanced_toggle: Optional[ttk.Button] = None
-        self.advanced_frame: Optional[ttk.Frame] = None
-        self._compact_control_buttons: list[ttk.Button] = []
+        self._control_mode_var = tk.StringVar(value="regulators")
+        self._regulator_frame: Optional[ttk.Frame] = None
+        self._dpad_frame: Optional[ttk.Frame] = None
+        self._compact_control_buttons: list[tk.Widget] = []
         self.crop_button_frame: Optional[ttk.Frame] = None
         self.legend_frame: Optional[tk.Widget] = None
         self._loading_overlay: Optional[tk.Frame] = None
@@ -107,6 +134,9 @@ class Application(tk.Tk):
         self._auto_task_token: Optional[object] = None
         self._bulk_auto_token: Optional[object] = None
         self._bulk_auto_thread: Optional[threading.Thread] = None
+        self._memory_container: Optional[ttk.Frame] = None
+        self._memory_game_state: Optional[MemoryGameState] = None
+        self._memory_flip_job: Optional[str] = None
 
         self.input_var = tk.StringVar()
         self.output_var = tk.StringVar()
@@ -462,18 +492,87 @@ class Application(tk.Tk):
         self._compact_control_buttons.clear()
 
         compact_controls = ttk.Frame(controls_column)
-        compact_controls.grid(row=1, column=0, sticky="w", pady=(12, 0))
+        compact_controls.grid(row=1, column=0, sticky="we", pady=(12, 0))
         compact_controls.columnconfigure(0, weight=0)
+        compact_controls.columnconfigure(1, weight=1)
 
-        dpad = ttk.Frame(compact_controls)
-        dpad.grid(row=0, column=0, sticky="w")
+        toggle_frame = ttk.Frame(compact_controls)
+        toggle_frame.grid(row=0, column=0, columnspan=2, sticky="w")
+        regulators_toggle = ttk.Radiobutton(
+            toggle_frame,
+            text="Regler",
+            value="regulators",
+            variable=self._control_mode_var,
+            command=self._update_control_mode,
+        )
+        regulators_toggle.grid(row=0, column=0, sticky="w")
+        cross_toggle = ttk.Radiobutton(
+            toggle_frame,
+            text="Kreuz",
+            value="dpad",
+            variable=self._control_mode_var,
+            command=self._update_control_mode,
+        )
+        cross_toggle.grid(row=0, column=1, sticky="w", padx=(12, 0))
+        self._compact_control_buttons.extend([regulators_toggle, cross_toggle])
+
+        control_stack = ttk.Frame(compact_controls)
+        control_stack.grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        control_stack.columnconfigure(0, weight=1)
+
+        self._regulator_frame = ttk.Frame(control_stack)
+        self._regulator_frame.grid(row=0, column=0, sticky="w")
+        self._regulator_frame.columnconfigure(1, weight=1)
+        slider_length = 220
+
+        ttk.Label(self._regulator_frame, text="Zoom", style="Body.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        self.size_scale = ttk.Scale(
+            self._regulator_frame,
+            from_=0.25,
+            to=1.0,
+            variable=self.size_ratio,
+            command=self._on_slider_change,
+        )
+        self.size_scale.configure(length=slider_length)
+        self.size_scale.grid(row=0, column=1, sticky="w", padx=(6, 6))
+
+        ttk.Label(self._regulator_frame, text="X-Position", style="Body.TLabel").grid(
+            row=1, column=0, sticky="w", pady=(6, 0)
+        )
+        self.x_scale = ttk.Scale(
+            self._regulator_frame,
+            from_=0.0,
+            to=1.0,
+            variable=self.offset_x,
+            command=self._on_slider_change,
+        )
+        self.x_scale.configure(length=slider_length)
+        self.x_scale.grid(row=1, column=1, sticky="w", padx=(6, 6), pady=(6, 0))
+
+        ttk.Label(self._regulator_frame, text="Y-Position", style="Body.TLabel").grid(
+            row=2, column=0, sticky="w", pady=(6, 0)
+        )
+        self.y_scale = ttk.Scale(
+            self._regulator_frame,
+            from_=0.0,
+            to=1.0,
+            variable=self.offset_y,
+            command=self._on_slider_change,
+        )
+        self.y_scale.configure(length=slider_length)
+        self.y_scale.grid(row=2, column=1, sticky="w", padx=(6, 6), pady=(6, 0))
+
+        self._dpad_frame = ttk.Frame(control_stack)
+        self._dpad_frame.grid(row=0, column=0, sticky="w")
         for index in range(3):
-            dpad.columnconfigure(index, weight=1)
+            self._dpad_frame.columnconfigure(index, weight=1)
 
         def add_dpad_button(
             text: str, grid_row: int, grid_column: int, command: Callable[[], None]
         ) -> ttk.Button:
-            button = ttk.Button(dpad, text=text, width=3, command=command)
+            button = ttk.Button(self._dpad_frame, text=text, width=3, command=command)
             button.grid(row=grid_row, column=grid_column, padx=2, pady=2)
             self._compact_control_buttons.append(button)
             return button
@@ -486,17 +585,21 @@ class Application(tk.Tk):
         add_dpad_button("↓", 2, 1, lambda: self._adjust_offset(0.0, self.OFFSET_STEP))
         add_dpad_button("−", 2, 2, lambda: self._adjust_zoom(-self.ZOOM_STEP))
 
-        compact_controls.columnconfigure(1, weight=1)
-        auto_button = ttk.Button(compact_controls, text="Auto", command=self._reset_crop_to_auto)
-        auto_button.grid(row=1, column=0, sticky="w", pady=(8, 0))
+        auto_button = ttk.Button(
+            compact_controls, text="Auto", command=self._reset_crop_to_auto
+        )
+        auto_button.grid(row=2, column=0, sticky="w", pady=(12, 0))
         self._compact_control_buttons.append(auto_button)
         analyze_all_button = ttk.Button(
             compact_controls,
             text="Alle Bilder analysieren",
             command=self._analyze_all_images,
+            width=24,
         )
-        analyze_all_button.grid(row=1, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+        analyze_all_button.grid(row=2, column=1, sticky="ew", padx=(12, 0), pady=(12, 0))
         self._compact_control_buttons.append(analyze_all_button)
+
+        self._update_control_mode()
 
         nav = ttk.Frame(controls_column)
         nav.grid(row=2, column=0, sticky="w", pady=(16, 0))
@@ -551,64 +654,6 @@ class Application(tk.Tk):
             width=7,
             style="Modern.TSpinbox",
         ).grid(row=0, column=1, sticky="w", padx=(8, 0))
-
-        self._advanced_toggle = ttk.Button(
-            controls_column,
-            text="Erweiterte Regler einblenden ▼",
-            command=self._toggle_advanced_settings,
-        )
-        self._advanced_toggle.grid(row=4, column=0, sticky="w", pady=(12, 4))
-
-        self.advanced_frame = ttk.Frame(controls_column)
-        self.advanced_frame.grid(row=5, column=0, sticky="ew")
-
-        sliders = ttk.Frame(self.advanced_frame)
-        sliders.grid(row=0, column=0, sticky="w")
-        sliders.columnconfigure(1, weight=0)
-        slider_length = 180
-
-        ttk.Label(sliders, text="Zoom", style="Body.TLabel").grid(row=0, column=0, sticky="w")
-        self.size_scale = ttk.Scale(
-            sliders, from_=0.25, to=1.0, variable=self.size_ratio, command=self._on_slider_change
-        )
-        self.size_scale.configure(length=slider_length)
-        self.size_scale.grid(row=0, column=1, sticky="w", padx=(6, 6))
-
-        ttk.Label(sliders, text="X-Position", style="Body.TLabel").grid(
-            row=1, column=0, sticky="w", pady=(6, 0)
-        )
-        self.x_scale = ttk.Scale(
-            sliders, from_=0.0, to=1.0, variable=self.offset_x, command=self._on_slider_change
-        )
-        self.x_scale.configure(length=slider_length)
-        self.x_scale.grid(row=1, column=1, sticky="w", padx=(6, 6), pady=(6, 0))
-
-        ttk.Label(sliders, text="Y-Position", style="Body.TLabel").grid(
-            row=2, column=0, sticky="w", pady=(6, 0)
-        )
-        self.y_scale = ttk.Scale(
-            sliders, from_=0.0, to=1.0, variable=self.offset_y, command=self._on_slider_change
-        )
-        self.y_scale.configure(length=slider_length)
-        self.y_scale.grid(row=2, column=1, sticky="w", padx=(6, 6), pady=(6, 0))
-
-        button_column = ttk.Frame(sliders)
-        button_column.grid(row=0, column=2, rowspan=3, sticky="nsw", padx=(12, 0))
-        auto_slider_button = ttk.Button(
-            button_column, text="Auto", command=self._reset_crop_to_auto
-        )
-        auto_slider_button.grid(
-            row=0,
-            column=0,
-            sticky="ew",
-        )
-        analyze_slider_button = ttk.Button(
-            button_column,
-            text="Alle Bilder analysieren",
-            command=self._analyze_all_images,
-        )
-        analyze_slider_button.grid(row=1, column=0, sticky="ew", pady=(6, 0))
-        self._compact_control_buttons.extend([auto_slider_button, analyze_slider_button])
 
         ttk.Label(controls_column, textvariable=self.crop_info_var, style="Section.TLabel").grid(
             row=6,
@@ -675,7 +720,6 @@ class Application(tk.Tk):
         self.convert_button = ttk.Button(buttons, text="Alle konvertieren", command=self._on_convert, style="Accent.TButton")
         self.convert_button.grid(row=0, column=1, sticky="e")
 
-        self._update_advanced_settings_visibility()
         self._set_controls_enabled(False)
         self._refresh_output_list()
         self._refresh_legend_state()
@@ -781,19 +825,18 @@ class Application(tk.Tk):
                 )
                 text_label.configure(foreground="#4c5c80", cursor="")
 
-    def _toggle_advanced_settings(self) -> None:
-        self._advanced_settings_visible = not self._advanced_settings_visible
-        self._update_advanced_settings_visibility()
-
-    def _update_advanced_settings_visibility(self) -> None:
-        if self.advanced_frame is None or self._advanced_toggle is None:
-            return
-        if self._advanced_settings_visible:
-            self.advanced_frame.grid()
-            self._advanced_toggle.configure(text="Erweiterte Regler ausblenden ▲")
-        else:
-            self.advanced_frame.grid_remove()
-            self._advanced_toggle.configure(text="Erweiterte Regler einblenden ▼")
+    def _update_control_mode(self, *_args: object) -> None:
+        mode = self._control_mode_var.get()
+        if self._regulator_frame is not None:
+            if mode == "regulators":
+                self._regulator_frame.grid(row=0, column=0, sticky="w")
+            else:
+                self._regulator_frame.grid_remove()
+        if self._dpad_frame is not None:
+            if mode == "dpad":
+                self._dpad_frame.grid(row=0, column=0, sticky="w")
+            else:
+                self._dpad_frame.grid_remove()
 
     def _set_offset(self, x_value: float, y_value: float) -> None:
         if self._updating_controls:
@@ -1394,6 +1437,276 @@ class Application(tk.Tk):
         cropper = self._get_preview_cropper()
         return self._compute_auto_manual_for_image(self.current_image, options, cropper)
 
+    # ------------------------------------------------------------------
+    # Memory-Minispiel für die Wartezeit
+    # ------------------------------------------------------------------
+    def _memory_grid_dimensions(self, total_cards: int) -> tuple[int, int]:
+        if total_cards <= 0:
+            return (1, 1)
+        best_rows, best_cols = 1, total_cards
+        best_diff = total_cards
+        limit = int(math.sqrt(total_cards))
+        for rows in range(1, limit + 1):
+            if total_cards % rows != 0:
+                continue
+            cols = total_cards // rows
+            diff = abs(cols - rows)
+            if diff < best_diff:
+                best_rows, best_cols = rows, cols
+                best_diff = diff
+        if best_rows > best_cols:
+            best_rows, best_cols = best_cols, best_rows
+        return best_rows, best_cols
+
+    def _create_memory_back_image(self, size: int) -> ImageTk.PhotoImage:
+        size = max(32, size)
+        base = Image.new("RGB", (size, size), "#0b1326")
+        draw = ImageDraw.Draw(base)
+        radius = max(8, size // 6)
+        border_color = "#1e2f52"
+        fill_color = "#101c36"
+        draw.rounded_rectangle(
+            (1, 1, size - 2, size - 2),
+            radius=radius,
+            fill=fill_color,
+            outline=border_color,
+            width=2,
+        )
+        pad = size // 4
+        center = size // 2
+        draw.line((pad, center, size - pad, center), fill=self._accent_color, width=3)
+        draw.line((center, pad, center, size - pad), fill=self._success_color, width=3)
+        return ImageTk.PhotoImage(base)
+
+    def _create_memory_face_image(self, path: Path, size: int) -> ImageTk.PhotoImage:
+        canvas = Image.new("RGB", (size, size), "#0b1326")
+        border_color = "#2b3f66"
+        max_content = max(1, size - 12)
+        try:
+            with Image.open(path) as img:
+                picture = img.convert("RGB")
+        except Exception:
+            picture = Image.new("RGB", (max_content, max_content), "#24335a")
+        picture.thumbnail((max_content, max_content), RESAMPLE_LANCZOS)
+        offset = ((size - picture.width) // 2, (size - picture.height) // 2)
+        canvas.paste(picture, offset)
+        draw = ImageDraw.Draw(canvas)
+        radius = max(6, size // 8)
+        draw.rounded_rectangle(
+            (1, 1, size - 2, size - 2),
+            radius=radius,
+            outline=border_color,
+            width=2,
+        )
+        return ImageTk.PhotoImage(canvas)
+
+    def _start_memory_game(self, images: list[Path], token: object) -> None:
+        if not images:
+            return
+        self._close_memory_game()
+        self._memory_flip_job = None
+        self._hide_loading_overlay()
+        if self.canvas.winfo_manager():
+            self.canvas.grid_remove()
+        preview_parent = self.canvas.master
+        container = ttk.Frame(preview_parent, style="Card.TFrame", padding=16)
+        container.grid(row=1, column=1, sticky="n", pady=(12, 12))
+        container.columnconfigure(0, weight=1)
+        heading = ttk.Label(container, text="Memory", style="Heading.TLabel")
+        heading.grid(row=0, column=0, sticky="w")
+        sublabel = ttk.Label(
+            container,
+            text="Finde die Paare, während die Analyse läuft.",
+            style="Body.TLabel",
+            wraplength=self.CANVAS_SIZE,
+        )
+        sublabel.grid(row=1, column=0, sticky="w", pady=(4, 12))
+
+        game_frame = ttk.Frame(container)
+        game_frame.grid(row=2, column=0, sticky="n")
+        total_cards = len(images) * 2
+        rows, cols = self._memory_grid_dimensions(total_cards)
+        max_dimension = max(1, max(rows, cols))
+        cell_size = max(56, min(180, self.CANVAS_SIZE // max_dimension))
+        back_image = self._create_memory_back_image(cell_size)
+        cards: list[MemoryCard] = []
+        card_paths = [path for path in images for _ in range(2)]
+        random.shuffle(card_paths)
+        for index, path in enumerate(card_paths):
+            face_image = self._create_memory_face_image(path, cell_size)
+            button = tk.Button(
+                game_frame,
+                image=back_image,
+                command=lambda idx=index: self._on_memory_card_click(idx),
+                bd=0,
+                relief="flat",
+                highlightthickness=0,
+                background=self._card_background,
+                activebackground=self._card_background,
+                cursor="hand2",
+                takefocus=0,
+                padx=0,
+                pady=0,
+            )
+            row = index // max(1, cols)
+            column = index % max(1, cols)
+            button.grid(row=row, column=column, padx=4, pady=4)
+            button.image = back_image
+            cards.append(MemoryCard(path=path, face_image=face_image, button=button))
+
+        progress_var = tk.StringVar(value=f"Analysefortschritt: 0/{len(images)}")
+        progress_label = ttk.Label(container, textvariable=progress_var, style="Body.TLabel")
+        progress_label.grid(row=3, column=0, sticky="w", pady=(16, 4))
+        progress = ttk.Progressbar(
+            container,
+            mode="determinate",
+            maximum=max(1, len(images)),
+            value=0,
+        )
+        progress.grid(row=4, column=0, sticky="ew")
+
+        self._memory_container = container
+        self._memory_game_state = MemoryGameState(
+            frame=container,
+            cards=cards,
+            token=token,
+            progressbar=progress,
+            progress_var=progress_var,
+            back_image=back_image,
+            total=len(images),
+        )
+
+    def _update_memory_progress(self, token: object, processed: int, total: int) -> None:
+        state = self._memory_game_state
+        if state is None or state.token is not token:
+            return
+        state.total = total
+        maximum = max(1, total)
+        state.progressbar.configure(maximum=maximum)
+        clamped = int(clamp(processed, 0, maximum))
+        state.progressbar.configure(value=clamped)
+        state.progress_var.set(f"Analysefortschritt: {clamped}/{maximum}")
+
+    def _on_memory_card_click(self, index: int) -> None:
+        state = self._memory_game_state
+        if state is None or state.lock:
+            return
+        if index < 0 or index >= len(state.cards):
+            return
+        card = state.cards[index]
+        if card.matched or card.revealed:
+            return
+        self._reveal_memory_card(state, index)
+        if state.first_index is None:
+            state.first_index = index
+            return
+        first_index = state.first_index
+        first_card = state.cards[first_index]
+        if first_card.path == card.path:
+            card.matched = True
+            first_card.matched = True
+            card.button.configure(state="disabled", cursor="arrow")
+            first_card.button.configure(state="disabled", cursor="arrow")
+            accent = self._success_color
+            for matched in (card, first_card):
+                matched.button.configure(
+                    highlightthickness=2,
+                    highlightbackground=accent,
+                    highlightcolor=accent,
+                )
+            state.first_index = None
+            self._check_memory_game_completion()
+            return
+
+        state.lock = True
+        if self._memory_flip_job is not None:
+            try:
+                self.after_cancel(self._memory_flip_job)
+            except ValueError:
+                pass
+            self._memory_flip_job = None
+
+        def hide_cards() -> None:
+            self._hide_memory_card(state, first_index)
+            self._hide_memory_card(state, index)
+            state.first_index = None
+            state.lock = False
+            self._memory_flip_job = None
+
+        self._memory_flip_job = self.after(800, hide_cards)
+
+    def _reveal_memory_card(self, state: MemoryGameState, index: int) -> None:
+        card = state.cards[index]
+        card.button.configure(image=card.face_image)
+        card.button.image = card.face_image
+        accent = self._accent_color
+        card.button.configure(
+            highlightthickness=2,
+            highlightbackground=accent,
+            highlightcolor=accent,
+        )
+        card.revealed = True
+
+    def _hide_memory_card(self, state: MemoryGameState, index: int) -> None:
+        card = state.cards[index]
+        if card.matched:
+            return
+        card.button.configure(image=state.back_image, state="normal", cursor="hand2")
+        card.button.image = state.back_image
+        card.button.configure(highlightthickness=0)
+        card.revealed = False
+
+    def _check_memory_game_completion(self) -> None:
+        state = self._memory_game_state
+        if state is None or state.completed:
+            return
+        if all(card.matched for card in state.cards):
+            state.completed = True
+            if not state.analysis_done:
+                state.progress_var.set("Alle Paare gefunden! Die Analyse läuft noch…")
+            if state.analysis_done:
+                self.after(0, self._close_memory_game)
+
+    def _on_memory_analysis_complete(self, token: object) -> None:
+        state = self._memory_game_state
+        if state is None or state.token is not token:
+            return
+        state.analysis_done = True
+        maximum = max(1, state.total)
+        state.progressbar.configure(maximum=maximum, value=maximum)
+        state.progress_var.set(f"Analysefortschritt: {maximum}/{maximum}")
+        if state.completed:
+            self.after(0, self._close_memory_game)
+            return
+
+        def prompt_user() -> None:
+            answer = messagebox.askyesno(
+                "Analyse abgeschlossen",
+                "Möchtest du zu Ende spielen? Deine Bilder sind fertig.",
+            )
+            if answer:
+                return
+            self._close_memory_game()
+
+        self.after(0, prompt_user)
+
+    def _close_memory_game(self) -> None:
+        if self._memory_flip_job is not None:
+            try:
+                self.after_cancel(self._memory_flip_job)
+            except ValueError:
+                pass
+            self._memory_flip_job = None
+        self._memory_game_state = None
+        if self._memory_container is not None:
+            try:
+                self._memory_container.destroy()
+            except tk.TclError:
+                pass
+            self._memory_container = None
+        if self.canvas.winfo_manager() == "":
+            self.canvas.grid(row=1, column=1, sticky="n", pady=(12, 12))
+
     def _analyze_all_images(self) -> None:
         if not self.image_files:
             messagebox.showinfo("Analyse", "Keine Bilder zum Analysieren gefunden.")
@@ -1417,7 +1730,7 @@ class Application(tk.Tk):
         total = len(images)
         token = object()
         self._bulk_auto_token = token
-        self._show_loading_overlay("Analysiere Bilder…")
+        self._start_memory_game(images, token)
         self._set_controls_enabled(False)
         self._update_bulk_auto_progress(token, 0, total)
 
@@ -1459,6 +1772,7 @@ class Application(tk.Tk):
         message = f"Analysiere Bilder… {processed}/{total}"
         self.progress_var.set(message)
         self._loading_message_var.set(message)
+        self._update_memory_progress(token, processed, total)
 
     def _finish_bulk_auto(
         self,
@@ -1508,6 +1822,7 @@ class Application(tk.Tk):
         self._refresh_selected_button_state()
         self._refresh_crop_buttons()
         self._refresh_legend_state()
+        self._on_memory_analysis_complete(token)
 
     def _scale_crop(self, crop: CropBox, factor: float, width: int, height: int) -> CropBox:
         factor = clamp(factor, 0.01, 10.0)
