@@ -138,7 +138,7 @@ class ProcessingOptions:
     keep_audio: bool = True
     log_level: str = "info"
     face_detection_enabled: bool = True
-    detection_mode: str = "face"
+    detection_mode: str = "auto"
     motion_enabled: bool = True
     motion_direction: str = "in"
 

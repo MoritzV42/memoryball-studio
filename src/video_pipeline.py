@@ -11,6 +11,7 @@ import numpy as np
 
 from .face_cropper import FaceCropper
 from .utils import (
+    CROP_OVERFLOW_RATIO,
     CropBox,
     ProcessingOptions,
     normalize_crop_with_overflow,
@@ -47,7 +48,9 @@ def _compute_crop(frame: np.ndarray, options: ProcessingOptions, face_cropper: O
         crop = face_cropper.track(frame, width, height, fallback)
     else:
         crop = fallback
-    return normalize_crop_with_overflow(width, height, crop)
+    allow_overflow = options.mode == "manual"
+    overflow_ratio = CROP_OVERFLOW_RATIO if allow_overflow else 0.0
+    return normalize_crop_with_overflow(width, height, crop, overflow_ratio=overflow_ratio)
 
 
 def _crop_frame_with_padding(frame: np.ndarray, crop_box: CropBox) -> np.ndarray:

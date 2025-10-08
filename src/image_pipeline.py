@@ -13,6 +13,7 @@ from pillow_heif import register_heif_opener
 
 from .face_cropper import FaceCropper
 from .utils import (
+    CROP_OVERFLOW_RATIO,
     CropBox,
     ManualCrop,
     ProcessingOptions,
@@ -48,8 +49,15 @@ def _center_square(width: int, height: int, pad: float = 0.0) -> CropBox:
     return CropBox(x=x, y=y, size=size)
 
 
-def _normalize_crop(width: int, height: int, crop_box: CropBox) -> CropBox:
-    return normalize_crop_with_overflow(width, height, crop_box)
+def _normalize_crop(
+    width: int,
+    height: int,
+    crop_box: CropBox,
+    *,
+    allow_overflow: bool = True,
+) -> CropBox:
+    ratio = CROP_OVERFLOW_RATIO if allow_overflow else 0.0
+    return normalize_crop_with_overflow(width, height, crop_box, overflow_ratio=ratio)
 
 
 def determine_crop_box(
@@ -59,6 +67,7 @@ def determine_crop_box(
 ) -> CropBox:
     width, height = img.size
     base_crop = _center_square(width, height, options.pad)
+    auto_detected = False
     if options.mode == "center":
         crop_box = base_crop
     elif options.mode == "manual" and None not in (options.crop_x, options.crop_y, options.crop_w, options.crop_h):
@@ -83,9 +92,11 @@ def determine_crop_box(
                     focus = face_cropper.focus_window(detections, width, height, base_crop.size)
                     if focus is not None:
                         crop_box = focus
+        auto_detected = True
     else:
         crop_box = base_crop
-    return _normalize_crop(width, height, crop_box)
+    allow_overflow = not auto_detected
+    return _normalize_crop(width, height, crop_box, allow_overflow=allow_overflow)
 
 
 def determine_motion_manual(
@@ -96,12 +107,12 @@ def determine_motion_manual(
     width, height = img.size
     base_crop = _center_square(width, height, options.pad)
     if not options.motion_enabled:
-        normalized = _normalize_crop(width, height, base_crop)
+        normalized = _normalize_crop(width, height, base_crop, allow_overflow=False)
         start = CropBox(normalized.x, normalized.y, normalized.size)
         end = CropBox(normalized.x, normalized.y, normalized.size)
         return ManualCrop(start=start, end=end)
     if not options.face_detection_enabled or face_cropper is None:
-        normalized = _normalize_crop(width, height, base_crop)
+        normalized = _normalize_crop(width, height, base_crop, allow_overflow=False)
         start = CropBox(normalized.x, normalized.y, normalized.size)
         end = CropBox(normalized.x, normalized.y, normalized.size)
         return ManualCrop(start=start, end=end)
@@ -123,8 +134,8 @@ def determine_motion_manual(
         return ManualCrop(start=start, end=end)
 
     start, end = plan
-    start = _normalize_crop(width, height, start)
-    end = _normalize_crop(width, height, end)
+    start = _normalize_crop(width, height, start, allow_overflow=False)
+    end = _normalize_crop(width, height, end, allow_overflow=False)
     start = CropBox(start.x, start.y, start.size)
     end = CropBox(end.x, end.y, end.size)
 
@@ -247,16 +258,16 @@ def process_image(
         width, height = img.size
 
         if manual_crop is not None:
-            start_crop = _normalize_crop(width, height, manual_crop.start)
-            end_crop = _normalize_crop(width, height, manual_crop.end)
+            start_crop = _normalize_crop(width, height, manual_crop.start, allow_overflow=True)
+            end_crop = _normalize_crop(width, height, manual_crop.end, allow_overflow=True)
         else:
             if options.motion_enabled:
                 auto_manual = determine_motion_manual(img, options, face_cropper)
-                start_crop = _normalize_crop(width, height, auto_manual.start)
-                end_crop = _normalize_crop(width, height, auto_manual.end)
+                start_crop = _normalize_crop(width, height, auto_manual.start, allow_overflow=False)
+                end_crop = _normalize_crop(width, height, auto_manual.end, allow_overflow=False)
             else:
                 auto_crop = determine_crop_box(img, options, face_cropper)
-                start_crop = _normalize_crop(width, height, auto_crop)
+                start_crop = _normalize_crop(width, height, auto_crop, allow_overflow=False)
                 end_crop = start_crop
 
         if not options.motion_enabled:
