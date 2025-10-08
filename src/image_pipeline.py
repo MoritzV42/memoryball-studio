@@ -27,6 +27,9 @@ register_heif_opener()
 
 
 IMAGE_CLIP_DURATION = 5.0
+IMAGE_START_HOLD = 0.5
+IMAGE_END_HOLD = 0.5
+IMAGE_TRANSITION_DURATION = max(0.0, IMAGE_CLIP_DURATION - IMAGE_START_HOLD - IMAGE_END_HOLD)
 DEFAULT_IMAGE_FPS = 30.0
 @dataclass(slots=True)
 class ImageResult:
@@ -171,19 +174,57 @@ def _iter_motion_frames(
     duration: float,
     motion_enabled: bool,
 ) -> Iterable[np.ndarray]:
-    frames = max(1, int(round(duration * fps)))
+    total_frames = max(1, int(round(duration * fps)))
     rgb_image = image.convert("RGB")
 
-    for index in range(frames):
-        if motion_enabled and frames > 1:
-            fraction = index / (frames - 1)
-        else:
-            fraction = 0.0
-        crop = _interpolate_crop(start, end, fraction)
-        cropped = rgb_image.crop(crop.as_tuple())
+    def render_crop(crop_box: CropBox) -> np.ndarray:
+        cropped = rgb_image.crop(crop_box.as_tuple())
         resized = cropped.resize((target, target), Image.Resampling.LANCZOS)
-        frame_array = np.asarray(resized, dtype=np.uint8)
-        yield frame_array
+        return np.asarray(resized, dtype=np.uint8)
+
+    if not motion_enabled:
+        start_hold_frames = total_frames
+        end_hold_frames = 0
+        motion_frames = 0
+    else:
+        start_hold_frames = max(1, int(round(IMAGE_START_HOLD * fps)))
+        end_hold_frames = max(1, int(round(IMAGE_END_HOLD * fps)))
+        desired_motion_frames = max(0, int(round(IMAGE_TRANSITION_DURATION * fps)))
+        available = max(0, total_frames - start_hold_frames - end_hold_frames)
+        motion_frames = min(available, desired_motion_frames)
+        leftover = total_frames - (start_hold_frames + end_hold_frames + motion_frames)
+        if leftover > 0:
+            motion_frames += leftover
+        remainder = total_frames - (start_hold_frames + end_hold_frames + motion_frames)
+        if remainder < 0:
+            reduction = -remainder
+            reduce_start = min(reduction, start_hold_frames - 1)
+            start_hold_frames -= reduce_start
+            reduction -= reduce_start
+            if reduction > 0:
+                end_hold_frames = max(0, end_hold_frames - reduction)
+            motion_frames = max(0, total_frames - start_hold_frames - end_hold_frames)
+
+    start_frame = render_crop(start)
+    end_frame = render_crop(end)
+
+    for _ in range(start_hold_frames):
+        yield start_frame
+
+    if motion_enabled and motion_frames > 0:
+        steps = motion_frames + 1
+        for index in range(motion_frames):
+            linear = (index + 1) / steps
+            eased = linear * linear * (3 - 2 * linear)
+            fraction = clamp(eased, 0.0, 1.0)
+            crop = _interpolate_crop(start, end, fraction)
+            yield render_crop(crop)
+    else:
+        for _ in range(max(0, motion_frames)):
+            yield start_frame
+
+    for _ in range(end_hold_frames):
+        yield end_frame
 
 
 def _encode_video(
