@@ -141,3 +141,24 @@ Traceback (most recent call last):
         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 _tkinter.TclError: expected integer but got "UI"
 
+[2025-10-08 07:07:56]
+Traceback (most recent call last):
+  File "C:\GitHub\memoryball-studio\main.py", line 307, in <module>
+    main()
+    ~~~~^^
+  File "C:\GitHub\memoryball-studio\main.py", line 300, in main
+    _launch_gui_with_feedback()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\GitHub\memoryball-studio\main.py", line 275, in _launch_gui_with_feedback
+    launch_gui()
+    ~~~~~~~~~~^^
+  File "C:\GitHub\memoryball-studio\src\gui.py", line 1882, in launch_gui
+    app = Application()
+  File "C:\GitHub\memoryball-studio\src\gui.py", line 118, in __init__
+    self._build_layout()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "C:\GitHub\memoryball-studio\src\gui.py", line 385, in _build_layout
+    self.listbox.column("#0", anchor="w", stretch=True)
+    ^^^^^^^^^^^^^^^^^^^
+AttributeError: 'Listbox' object has no attribute 'column'
+
