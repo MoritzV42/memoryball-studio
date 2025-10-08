@@ -48,7 +48,7 @@ class Application(tk.Tk):
 
     CANVAS_SIZE = 520
     CIRCLE_MARGIN = ORIENTATION_CIRCLE_MARGIN
-    PREVIEW_OVERFLOW_RATIO = 0.05
+    PREVIEW_OVERFLOW_RATIO = 0.02
     MOTION_DIRECTION_CHOICES = [
         ("in", "Reinzoomen"),
         ("out", "Rauszoomen"),
@@ -396,8 +396,38 @@ class Application(tk.Tk):
             row=0, column=0, columnspan=2, sticky="w"
         )
 
-        controls_column = ttk.Frame(preview)
-        controls_column.grid(row=1, column=0, sticky="nw", pady=(12, 0), padx=(0, 12))
+        controls_container = ttk.Frame(preview)
+        controls_container.grid(row=1, column=0, sticky="nsw", pady=(12, 0), padx=(0, 12))
+        controls_container.columnconfigure(0, weight=1)
+        controls_container.rowconfigure(0, weight=1)
+
+        controls_canvas = tk.Canvas(
+            controls_container,
+            background=self._card_background,
+            highlightthickness=0,
+            bd=0,
+            width=260,
+        )
+        controls_canvas.grid(row=0, column=0, sticky="nsw")
+        controls_scrollbar = ttk.Scrollbar(
+            controls_container, orient="vertical", command=controls_canvas.yview
+        )
+        controls_scrollbar.grid(row=0, column=1, sticky="ns")
+        controls_canvas.configure(yscrollcommand=controls_scrollbar.set)
+
+        controls_column = ttk.Frame(controls_canvas)
+        controls_window = controls_canvas.create_window(
+            (0, 0), window=controls_column, anchor="nw", tags=("controls",)
+        )
+
+        def _on_controls_configure(event) -> None:
+            controls_canvas.configure(scrollregion=controls_canvas.bbox("all"))
+
+        def _resize_controls(event) -> None:
+            controls_canvas.itemconfigure(controls_window, width=event.width)
+
+        controls_column.bind("<Configure>", _on_controls_configure)
+        controls_canvas.bind("<Configure>", _resize_controls)
         controls_column.columnconfigure(0, weight=1)
 
         button_frame = ttk.Frame(controls_column)
@@ -407,14 +437,14 @@ class Application(tk.Tk):
         self._crop_buttons = {
             "start": ttk.Button(
                 button_frame,
-                text="Start",
+                text="Start 1",
                 width=8,
                 style="Start.TButton",
                 command=lambda: self._select_crop("start"),
             ),
             "end": ttk.Button(
                 button_frame,
-                text="Ende",
+                text="Ende 2",
                 width=8,
                 style="End.TButton",
                 command=lambda: self._select_crop("end"),
@@ -444,10 +474,12 @@ class Application(tk.Tk):
             return button
 
         add_dpad_button("↑", 0, 1, lambda: self._adjust_offset(0.0, -self.OFFSET_STEP))
+        add_dpad_button("+", 0, 2, lambda: self._adjust_zoom(self.ZOOM_STEP))
         add_dpad_button("←", 1, 0, lambda: self._adjust_offset(-self.OFFSET_STEP, 0.0))
         add_dpad_button("●", 1, 1, self._center_offset)
         add_dpad_button("→", 1, 2, lambda: self._adjust_offset(self.OFFSET_STEP, 0.0))
         add_dpad_button("↓", 2, 1, lambda: self._adjust_offset(0.0, self.OFFSET_STEP))
+        add_dpad_button("−", 2, 2, lambda: self._adjust_zoom(-self.ZOOM_STEP))
 
         auto_button = ttk.Button(compact_controls, text="Auto", command=self._reset_crop_to_auto)
         auto_button.grid(row=1, column=0, sticky="w", pady=(8, 0))
@@ -456,6 +488,7 @@ class Application(tk.Tk):
         nav = ttk.Frame(controls_column)
         nav.grid(row=2, column=0, sticky="w", pady=(16, 0))
         nav.columnconfigure(1, weight=0)
+        nav.columnconfigure(2, weight=0)
         nav.rowconfigure(0, weight=0)
         nav.rowconfigure(1, weight=0)
         nav.rowconfigure(2, weight=0)
@@ -466,28 +499,10 @@ class Application(tk.Tk):
         ttk.Label(nav, textvariable=self.position_var, style="Section.TLabel").grid(
             row=1, column=1, padx=(8, 12), sticky="w"
         )
-        next_stack = ttk.Frame(nav)
-        next_stack.grid(row=0, column=2, rowspan=3, sticky="nw", padx=(12, 0))
-        zoom_in = ttk.Button(
-            next_stack,
-            text="+",
-            width=3,
-            command=lambda: self._adjust_zoom(self.ZOOM_STEP),
-        )
-        zoom_in.grid(row=0, column=0, sticky="ew")
-        self._compact_control_buttons.append(zoom_in)
         self.next_button = ttk.Button(
-            next_stack, text="▶", width=3, command=self._show_next_image, style="Nav.TButton"
+            nav, text="▶", width=3, command=self._show_next_image, style="Nav.TButton"
         )
-        self.next_button.grid(row=1, column=0, sticky="ew", pady=(6, 6))
-        zoom_out = ttk.Button(
-            next_stack,
-            text="−",
-            width=3,
-            command=lambda: self._adjust_zoom(-self.ZOOM_STEP),
-        )
-        zoom_out.grid(row=2, column=0, sticky="ew")
-        self._compact_control_buttons.append(zoom_out)
+        self.next_button.grid(row=1, column=2, sticky="w", padx=(12, 0))
 
         motion_controls = ttk.Frame(controls_column)
         motion_controls.grid(row=3, column=0, sticky="w", pady=(12, 0))
