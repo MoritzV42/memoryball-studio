@@ -10,7 +10,7 @@ import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from typing import Optional
+from typing import Callable, Optional
 
 from PIL import Image, ImageDraw, ImageTk
 try:  # Pillow 9.1+
@@ -53,6 +53,11 @@ class Application(tk.Tk):
         ("in", "Reinzoomen"),
         ("out", "Rauszoomen"),
     ]
+    OFFSET_STEP = 0.03
+    ZOOM_STEP = 0.05
+    MIN_ZOOM_RATIO = 0.25
+    MAX_ZOOM_RATIO = 1.0
+    CENTER_VALUE = 0.5
 
     def __init__(self) -> None:
         super().__init__()
@@ -85,6 +90,10 @@ class Application(tk.Tk):
         self._tutorial_index = -1
         self._tutorial_running = False
         self._tutorial_completed = self._load_tutorial_completed()
+        self._advanced_settings_visible = False
+        self._advanced_toggle: Optional[ttk.Button] = None
+        self.advanced_frame: Optional[ttk.Frame] = None
+        self._compact_control_buttons: list[ttk.Button] = []
 
         self.input_var = tk.StringVar()
         self.output_var = tk.StringVar()
@@ -386,12 +395,20 @@ class Application(tk.Tk):
 
         preview = ttk.Frame(main, style="Card.TFrame", padding=20)
         preview.grid(row=2, column=1, sticky="nsew", padx=(16, 0))
-        preview.columnconfigure(0, weight=1)
-        preview.rowconfigure(2, weight=1)
+        preview.columnconfigure(0, weight=0)
+        preview.columnconfigure(1, weight=1)
+        preview.rowconfigure(1, weight=1)
 
-        ttk.Label(preview, text="Vorschau", style="Heading.TLabel").grid(row=0, column=0, sticky="w")
-        button_frame = ttk.Frame(preview)
-        button_frame.grid(row=1, column=0, sticky="w", pady=(10, 0))
+        ttk.Label(preview, text="Vorschau", style="Heading.TLabel").grid(
+            row=0, column=0, columnspan=2, sticky="w"
+        )
+
+        controls_column = ttk.Frame(preview)
+        controls_column.grid(row=1, column=0, sticky="nw", pady=(12, 0), padx=(0, 12))
+        controls_column.columnconfigure(0, weight=1)
+
+        button_frame = ttk.Frame(controls_column)
+        button_frame.grid(row=0, column=0, sticky="w")
         self._crop_buttons = {
             "start": ttk.Button(
                 button_frame,
@@ -412,6 +429,57 @@ class Application(tk.Tk):
         self._crop_buttons["end"].grid(row=0, column=1)
         self._refresh_crop_buttons()
 
+        self._compact_control_buttons.clear()
+
+        compact_controls = ttk.Frame(controls_column)
+        compact_controls.grid(row=1, column=0, sticky="w", pady=(12, 0))
+        compact_controls.columnconfigure(0, weight=0)
+        compact_controls.columnconfigure(1, weight=0)
+
+        dpad = ttk.Frame(compact_controls)
+        dpad.grid(row=0, column=0, sticky="w")
+        for index in range(3):
+            dpad.columnconfigure(index, weight=1)
+
+        def add_dpad_button(
+            text: str, grid_row: int, grid_column: int, command: Callable[[], None]
+        ) -> ttk.Button:
+            button = ttk.Button(dpad, text=text, width=3, command=command)
+            button.grid(row=grid_row, column=grid_column, padx=2, pady=2)
+            self._compact_control_buttons.append(button)
+            return button
+
+        add_dpad_button("↑", 0, 1, lambda: self._adjust_offset(0.0, -self.OFFSET_STEP))
+        add_dpad_button("←", 1, 0, lambda: self._adjust_offset(-self.OFFSET_STEP, 0.0))
+        add_dpad_button("●", 1, 1, self._center_offset)
+        add_dpad_button("→", 1, 2, lambda: self._adjust_offset(self.OFFSET_STEP, 0.0))
+        add_dpad_button("↓", 2, 1, lambda: self._adjust_offset(0.0, self.OFFSET_STEP))
+
+        auto_button = ttk.Button(compact_controls, text="Auto", command=self._reset_crop_to_auto)
+        auto_button.grid(row=1, column=0, sticky="w", pady=(8, 0))
+        self._compact_control_buttons.append(auto_button)
+
+        zoom_frame = ttk.Frame(compact_controls)
+        zoom_frame.grid(row=0, column=1, rowspan=2, sticky="nw", padx=(12, 0))
+        ttk.Label(zoom_frame, text="Zoom", style="Body.TLabel").grid(
+            row=0, column=0, sticky="w", pady=(0, 4)
+        )
+        zoom_in = ttk.Button(
+            zoom_frame,
+            text="+",
+            width=3,
+            command=lambda: self._adjust_zoom(self.ZOOM_STEP),
+        )
+        zoom_in.grid(row=1, column=0, sticky="ew")
+        zoom_out = ttk.Button(
+            zoom_frame,
+            text="−",
+            width=3,
+            command=lambda: self._adjust_zoom(-self.ZOOM_STEP),
+        )
+        zoom_out.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        self._compact_control_buttons.extend([zoom_in, zoom_out])
+
         self.canvas = tk.Canvas(
             preview,
             width=self.CANVAS_SIZE,
@@ -420,18 +488,18 @@ class Application(tk.Tk):
             highlightthickness=0,
             bd=0,
         )
-        self.canvas.grid(row=2, column=0, sticky="n", pady=(16, 12))
+        self.canvas.grid(row=1, column=1, sticky="n", pady=(12, 12))
         self.canvas.bind("<ButtonPress-1>", self._on_canvas_press)
         self.canvas.bind("<B1-Motion>", self._on_canvas_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
 
         legend = ttk.Frame(preview, style="Card.TFrame")
-        legend.grid(row=3, column=0, sticky="w", pady=(0, 12))
+        legend.grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 12))
         self.legend_frame = legend
         self._build_legend(legend)
 
         nav = ttk.Frame(preview)
-        nav.grid(row=4, column=0, sticky="ew", pady=(0, 12))
+        nav.grid(row=3, column=1, sticky="ew", pady=(0, 12))
         nav.columnconfigure(1, weight=1)
         self.prev_button = ttk.Button(nav, text="◀", width=3, command=self._show_previous_image, style="Nav.TButton")
         self.prev_button.grid(row=0, column=0, sticky="w")
@@ -440,7 +508,7 @@ class Application(tk.Tk):
         self.next_button.grid(row=0, column=2, sticky="e")
 
         motion_controls = ttk.Frame(preview)
-        motion_controls.grid(row=5, column=0, sticky="ew", pady=(0, 8))
+        motion_controls.grid(row=4, column=1, sticky="ew", pady=(0, 8))
         motion_controls.columnconfigure(1, weight=1)
         ttk.Checkbutton(
             motion_controls,
@@ -477,8 +545,18 @@ class Application(tk.Tk):
         )
         self.end_radio.grid(row=0, column=1)
 
-        sliders = ttk.Frame(preview)
-        sliders.grid(row=6, column=0, sticky="ew")
+        self._advanced_toggle = ttk.Button(
+            preview,
+            text="Erweiterte Regler einblenden ▼",
+            command=self._toggle_advanced_settings,
+        )
+        self._advanced_toggle.grid(row=5, column=1, sticky="w", pady=(0, 4))
+
+        self.advanced_frame = ttk.Frame(preview)
+        self.advanced_frame.grid(row=6, column=0, columnspan=2, sticky="ew")
+
+        sliders = ttk.Frame(self.advanced_frame)
+        sliders.grid(row=0, column=0, sticky="ew")
         sliders.columnconfigure(1, weight=1)
         sliders.columnconfigure(3, weight=1)
 
@@ -505,6 +583,7 @@ class Application(tk.Tk):
         ttk.Label(preview, textvariable=self.crop_info_var, style="Section.TLabel").grid(
             row=7,
             column=0,
+            columnspan=2,
             sticky="w",
             pady=(12, 0),
         )
@@ -553,6 +632,7 @@ class Application(tk.Tk):
         self.convert_button = ttk.Button(buttons, text="Alle konvertieren", command=self._on_convert, style="Accent.TButton")
         self.convert_button.grid(row=0, column=1, sticky="e")
 
+        self._update_advanced_settings_visibility()
         self._set_controls_enabled(False)
         self._refresh_output_list()
         self._refresh_legend_state()
@@ -631,6 +711,48 @@ class Application(tk.Tk):
                     cursor="",
                 )
                 text_label.configure(foreground="#4c5c80", cursor="")
+
+    def _toggle_advanced_settings(self) -> None:
+        self._advanced_settings_visible = not self._advanced_settings_visible
+        self._update_advanced_settings_visibility()
+
+    def _update_advanced_settings_visibility(self) -> None:
+        if self.advanced_frame is None or self._advanced_toggle is None:
+            return
+        if self._advanced_settings_visible:
+            self.advanced_frame.grid()
+            self._advanced_toggle.configure(text="Erweiterte Regler ausblenden ▲")
+        else:
+            self.advanced_frame.grid_remove()
+            self._advanced_toggle.configure(text="Erweiterte Regler einblenden ▼")
+
+    def _set_offset(self, x_value: float, y_value: float) -> None:
+        if self._updating_controls:
+            return
+        self.offset_x.set(clamp(x_value, 0.0, 1.0))
+        self.offset_y.set(clamp(y_value, 0.0, 1.0))
+        self._on_slider_change(0.0)
+
+    def _adjust_offset(self, delta_x: float, delta_y: float) -> None:
+        if self.current_image is None:
+            return
+        self._set_offset(self.offset_x.get() + delta_x, self.offset_y.get() + delta_y)
+
+    def _center_offset(self) -> None:
+        if self.current_image is None:
+            return
+        self._set_offset(self.CENTER_VALUE, self.CENTER_VALUE)
+
+    def _adjust_zoom(self, delta: float) -> None:
+        if self._updating_controls or self.current_image is None:
+            return
+        new_ratio = clamp(
+            self.size_ratio.get() + delta,
+            self.MIN_ZOOM_RATIO,
+            self.MAX_ZOOM_RATIO,
+        )
+        self.size_ratio.set(new_ratio)
+        self._on_slider_change(0.0)
 
     def _refresh_crop_buttons(self) -> None:
         if not self._crop_buttons:
@@ -852,6 +974,11 @@ class Application(tk.Tk):
                 scale.state(["!disabled"])
             else:
                 scale.state(["disabled"])
+        for button in self._compact_control_buttons:
+            if enabled:
+                button.state(["!disabled"])
+            else:
+                button.state(["disabled"])
         self.prev_button.state(["!disabled"] if enabled else ["disabled"])
         self.next_button.state(["!disabled"] if enabled else ["disabled"])
         self._crop_buttons_enabled = enabled
