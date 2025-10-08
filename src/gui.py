@@ -94,6 +94,10 @@ class Application(tk.Tk):
         self._advanced_toggle: Optional[ttk.Button] = None
         self.advanced_frame: Optional[ttk.Frame] = None
         self._compact_control_buttons: list[ttk.Button] = []
+        self._loading_overlay: Optional[tk.Frame] = None
+        self._loading_spinner: Optional[ttk.Progressbar] = None
+        self._loading_message_var = tk.StringVar(value="")
+        self._auto_task_token: Optional[object] = None
 
         self.input_var = tk.StringVar()
         self.output_var = tk.StringVar()
@@ -303,6 +307,7 @@ class Application(tk.Tk):
         main.columnconfigure(1, weight=1)
         main.columnconfigure(2, weight=0)
         main.rowconfigure(2, weight=1)
+        main.rowconfigure(3, weight=0)
 
         header = ttk.Frame(main)
         header.grid(row=0, column=0, columnspan=3, sticky="ew")
@@ -480,36 +485,25 @@ class Application(tk.Tk):
         zoom_out.grid(row=2, column=0, sticky="ew", pady=(6, 0))
         self._compact_control_buttons.extend([zoom_in, zoom_out])
 
-        self.canvas = tk.Canvas(
-            preview,
-            width=self.CANVAS_SIZE,
-            height=self.CANVAS_SIZE,
-            background="#060d1d",
-            highlightthickness=0,
-            bd=0,
+        nav = ttk.Frame(controls_column)
+        nav.grid(row=2, column=0, sticky="w", pady=(16, 0))
+        nav.columnconfigure(1, weight=0)
+        self.prev_button = ttk.Button(
+            nav, text="◀", width=3, command=self._show_previous_image, style="Nav.TButton"
         )
-        self.canvas.grid(row=1, column=1, sticky="n", pady=(12, 12))
-        self.canvas.bind("<ButtonPress-1>", self._on_canvas_press)
-        self.canvas.bind("<B1-Motion>", self._on_canvas_drag)
-        self.canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
-
-        legend = ttk.Frame(preview, style="Card.TFrame")
-        legend.grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 12))
-        self.legend_frame = legend
-        self._build_legend(legend)
-
-        nav = ttk.Frame(preview)
-        nav.grid(row=3, column=1, sticky="ew", pady=(0, 12))
-        nav.columnconfigure(1, weight=1)
-        self.prev_button = ttk.Button(nav, text="◀", width=3, command=self._show_previous_image, style="Nav.TButton")
         self.prev_button.grid(row=0, column=0, sticky="w")
-        ttk.Label(nav, textvariable=self.position_var, style="Section.TLabel").grid(row=0, column=1)
-        self.next_button = ttk.Button(nav, text="▶", width=3, command=self._show_next_image, style="Nav.TButton")
-        self.next_button.grid(row=0, column=2, sticky="e")
+        ttk.Label(nav, textvariable=self.position_var, style="Section.TLabel").grid(
+            row=0, column=1, padx=(8, 8), sticky="w"
+        )
+        self.next_button = ttk.Button(
+            nav, text="▶", width=3, command=self._show_next_image, style="Nav.TButton"
+        )
+        self.next_button.grid(row=0, column=2, sticky="w")
 
-        motion_controls = ttk.Frame(preview)
-        motion_controls.grid(row=4, column=1, sticky="ew", pady=(0, 8))
-        motion_controls.columnconfigure(1, weight=1)
+        motion_controls = ttk.Frame(controls_column)
+        motion_controls.grid(row=3, column=0, sticky="w", pady=(12, 0))
+        motion_controls.columnconfigure(0, weight=0)
+        motion_controls.columnconfigure(1, weight=0)
         ttk.Checkbutton(
             motion_controls,
             text="Bewegung aktiv",
@@ -529,7 +523,7 @@ class Application(tk.Tk):
             "<<ComboboxSelected>>", self._on_motion_direction_change
         )
         radio_frame = ttk.Frame(motion_controls)
-        radio_frame.grid(row=0, column=2, sticky="e")
+        radio_frame.grid(row=0, column=2, sticky="w")
         self.start_radio = ttk.Radiobutton(
             radio_frame,
             text="Start (Rot)",
@@ -546,14 +540,14 @@ class Application(tk.Tk):
         self.end_radio.grid(row=0, column=1)
 
         self._advanced_toggle = ttk.Button(
-            preview,
+            controls_column,
             text="Erweiterte Regler einblenden ▼",
             command=self._toggle_advanced_settings,
         )
-        self._advanced_toggle.grid(row=5, column=1, sticky="w", pady=(0, 4))
+        self._advanced_toggle.grid(row=4, column=0, sticky="w", pady=(12, 4))
 
-        self.advanced_frame = ttk.Frame(preview)
-        self.advanced_frame.grid(row=6, column=0, columnspan=2, sticky="ew")
+        self.advanced_frame = ttk.Frame(controls_column)
+        self.advanced_frame.grid(row=5, column=0, sticky="ew")
 
         sliders = ttk.Frame(self.advanced_frame)
         sliders.grid(row=0, column=0, sticky="ew")
@@ -561,15 +555,25 @@ class Application(tk.Tk):
         sliders.columnconfigure(3, weight=1)
 
         ttk.Label(sliders, text="Zoom", style="Body.TLabel").grid(row=0, column=0, sticky="w")
-        self.size_scale = ttk.Scale(sliders, from_=0.25, to=1.0, variable=self.size_ratio, command=self._on_slider_change)
+        self.size_scale = ttk.Scale(
+            sliders, from_=0.25, to=1.0, variable=self.size_ratio, command=self._on_slider_change
+        )
         self.size_scale.grid(row=0, column=1, sticky="ew", padx=(6, 6))
 
-        ttk.Label(sliders, text="X-Position", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(6, 0))
-        self.x_scale = ttk.Scale(sliders, from_=0.0, to=1.0, variable=self.offset_x, command=self._on_slider_change)
+        ttk.Label(sliders, text="X-Position", style="Body.TLabel").grid(
+            row=1, column=0, sticky="w", pady=(6, 0)
+        )
+        self.x_scale = ttk.Scale(
+            sliders, from_=0.0, to=1.0, variable=self.offset_x, command=self._on_slider_change
+        )
         self.x_scale.grid(row=1, column=1, sticky="ew", padx=(6, 6), pady=(6, 0))
 
-        ttk.Label(sliders, text="Y-Position", style="Body.TLabel").grid(row=2, column=0, sticky="w", pady=(6, 0))
-        self.y_scale = ttk.Scale(sliders, from_=0.0, to=1.0, variable=self.offset_y, command=self._on_slider_change)
+        ttk.Label(sliders, text="Y-Position", style="Body.TLabel").grid(
+            row=2, column=0, sticky="w", pady=(6, 0)
+        )
+        self.y_scale = ttk.Scale(
+            sliders, from_=0.0, to=1.0, variable=self.offset_y, command=self._on_slider_change
+        )
         self.y_scale.grid(row=2, column=1, sticky="ew", padx=(6, 6), pady=(6, 0))
 
         ttk.Button(sliders, text="Auto", command=self._reset_crop_to_auto).grid(
@@ -580,14 +584,32 @@ class Application(tk.Tk):
             padx=(12, 0),
         )
 
-        ttk.Label(preview, textvariable=self.crop_info_var, style="Section.TLabel").grid(
-            row=7,
+        ttk.Label(controls_column, textvariable=self.crop_info_var, style="Section.TLabel").grid(
+            row=6,
             column=0,
-            columnspan=2,
             sticky="w",
             pady=(12, 0),
         )
 
+        self.canvas = tk.Canvas(
+            preview,
+            width=self.CANVAS_SIZE,
+            height=self.CANVAS_SIZE,
+            background="#060d1d",
+            highlightthickness=0,
+            bd=0,
+        )
+        self.canvas.grid(row=1, column=1, sticky="n", pady=(12, 12))
+        self.canvas.bind("<ButtonPress-1>", self._on_canvas_press)
+        self.canvas.bind("<B1-Motion>", self._on_canvas_drag)
+        self.canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
+
+        self._create_loading_overlay(preview)
+
+        legend = ttk.Frame(preview, style="Card.TFrame")
+        legend.grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 12))
+        self.legend_frame = legend
+        self._build_legend(legend)
         output = ttk.Frame(main, style="Card.TFrame", padding=20)
         output.grid(row=2, column=2, sticky="nsw", padx=(16, 0))
         output.columnconfigure(0, weight=1)
@@ -617,7 +639,7 @@ class Application(tk.Tk):
         )
 
         bottom = ttk.Frame(main)
-        bottom.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(16, 0))
+        bottom.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(16, 0))
         bottom.columnconfigure(0, weight=1)
 
         ttk.Label(bottom, textvariable=self.progress_var, style="Status.TLabel").grid(row=0, column=0, sticky="w")
@@ -636,6 +658,32 @@ class Application(tk.Tk):
         self._set_controls_enabled(False)
         self._refresh_output_list()
         self._refresh_legend_state()
+
+    def _create_loading_overlay(self, parent: tk.Widget) -> None:
+        overlay = tk.Frame(parent, background=self._card_background, bd=0, highlightthickness=0)
+        overlay.configure(padx=24, pady=16)
+        message = ttk.Label(overlay, textvariable=self._loading_message_var, style="Body.TLabel")
+        message.pack(anchor="center")
+        spinner = ttk.Progressbar(overlay, mode="indeterminate", length=160)
+        spinner.pack(anchor="center", pady=(12, 0))
+        overlay.place_forget()
+        self._loading_overlay = overlay
+        self._loading_spinner = spinner
+
+    def _show_loading_overlay(self, message: str) -> None:
+        if self._loading_overlay is None or self._loading_spinner is None:
+            return
+        self._loading_message_var.set(message)
+        self._loading_overlay.place(relx=0.5, rely=0.5, anchor="center")
+        self._loading_overlay.lift()
+        self._loading_spinner.start(12)
+
+    def _hide_loading_overlay(self) -> None:
+        if self._loading_overlay is None or self._loading_spinner is None:
+            return
+        self._loading_spinner.stop()
+        self._loading_overlay.place_forget()
+        self._loading_message_var.set("")
 
     # ------------------------------------------------------------------
     # Helpers
@@ -1200,17 +1248,21 @@ class Application(tk.Tk):
             self.current_image = img.copy()
         manual = self.manual_crops.get(path)
         if manual is None:
-            manual = self._auto_manual_current()
+            self._start_auto_detection(path, message="Analysiere Bild…")
+            return
         else:
             manual = self._normalize_manual(manual)
         self.manual_crops[path] = manual
         self._apply_manual_to_controls(manual)
         self._set_controls_enabled(True)
         self._update_navigation_state()
+        self._refresh_selected_button_state()
+        self.progress_var.set("Bereit.")
+        self._hide_loading_overlay()
 
-    def _auto_manual_current(self) -> ManualCrop:
-        assert self.current_image is not None and self.input_path is not None
-        options = ProcessingOptions(
+    def _current_processing_options(self) -> ProcessingOptions:
+        assert self.input_path is not None
+        return ProcessingOptions(
             input_path=self.input_path,
             output_dir=self._resolve_output_dir() or self._default_output_for(self.input_path),
             size=self.size_var.get(),
@@ -1219,18 +1271,96 @@ class Application(tk.Tk):
             motion_enabled=self.motion_enabled_var.get(),
             motion_direction=self.motion_direction_var.get(),
         )
-        cropper = self._get_preview_cropper()
+
+    def _normalize_manual_for_image(
+        self,
+        image: Image.Image,
+        manual: ManualCrop,
+        overflow: Optional[float] = None,
+    ) -> ManualCrop:
+        width, height = image.size
+        start = self._normalize_crop_box(manual.start, width, height, overflow=overflow)
+        end = self._normalize_crop_box(manual.end, width, height, overflow=overflow)
+        return ManualCrop(start=start, end=end)
+
+    def _compute_auto_manual_for_image(
+        self,
+        image: Image.Image,
+        options: ProcessingOptions,
+        cropper: Optional[FaceCropper],
+    ) -> ManualCrop:
         if options.motion_enabled and cropper is not None:
-            manual = determine_motion_manual(self.current_image, options, cropper)
+            manual = determine_motion_manual(image, options, cropper)
         elif cropper is not None:
-            crop = determine_crop_box(self.current_image, options, cropper)
+            crop = determine_crop_box(image, options, cropper)
             manual = ManualCrop(start=crop, end=crop)
         else:
-            width, height = self.current_image.size
+            width, height = image.size
             size = float(min(width, height))
             base = CropBox((width - size) / 2, (height - size) / 2, size)
             manual = ManualCrop(start=base, end=base)
-        return self._normalize_manual(manual, overflow=0.0)
+        return self._normalize_manual_for_image(image, manual, overflow=0.0)
+
+    def _start_auto_detection(self, path: Path, *, message: str) -> None:
+        if self.current_image is None or self.input_path is None:
+            return
+        image = self.current_image.copy()
+        options = self._current_processing_options()
+        cropper = self._get_preview_cropper()
+        token = object()
+        self._auto_task_token = token
+        self._show_loading_overlay(message)
+        self.progress_var.set(message)
+        self._set_controls_enabled(False)
+
+        def worker() -> None:
+            try:
+                manual = self._compute_auto_manual_for_image(image, options, cropper)
+            except Exception as exc:
+                result: ManualCrop | Exception = exc
+            else:
+                result = manual
+            self.after(0, lambda: self._finish_auto_detection(token, path, result))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_auto_detection(
+        self, token: object, path: Path, result: ManualCrop | Exception
+    ) -> None:
+        if token != self._auto_task_token:
+            return
+        self._auto_task_token = None
+        if isinstance(result, Exception):
+            self._hide_loading_overlay()
+            self.progress_var.set("Analyse fehlgeschlagen.")
+            self._set_controls_enabled(True)
+            self._refresh_selected_button_state()
+            self._update_navigation_state()
+            messagebox.showerror(
+                "Fehler",
+                f"Die automatische Ausrichtung ist fehlgeschlagen.\n\n{result}",
+            )
+            return
+        if path != self.current_path:
+            self._hide_loading_overlay()
+            self._set_controls_enabled(True)
+            self._refresh_selected_button_state()
+            self._update_navigation_state()
+            return
+        manual = self._normalize_manual(result)
+        self.manual_crops[path] = manual
+        self._apply_manual_to_controls(manual)
+        self._set_controls_enabled(True)
+        self._refresh_selected_button_state()
+        self._update_navigation_state()
+        self.progress_var.set("Bereit.")
+        self._hide_loading_overlay()
+
+    def _auto_manual_current(self) -> ManualCrop:
+        assert self.current_image is not None and self.input_path is not None
+        options = self._current_processing_options()
+        cropper = self._get_preview_cropper()
+        return self._compute_auto_manual_for_image(self.current_image, options, cropper)
 
     def _scale_crop(self, crop: CropBox, factor: float, width: int, height: int) -> CropBox:
         factor = clamp(factor, 0.01, 10.0)
@@ -1258,10 +1388,7 @@ class Application(tk.Tk):
 
     def _normalize_manual(self, manual: ManualCrop, overflow: Optional[float] = None) -> ManualCrop:
         assert self.current_image is not None
-        width, height = self.current_image.size
-        start = self._normalize_crop_box(manual.start, width, height, overflow=overflow)
-        end = self._normalize_crop_box(manual.end, width, height, overflow=overflow)
-        return ManualCrop(start=start, end=end)
+        return self._normalize_manual_for_image(self.current_image, manual, overflow=overflow)
 
     def _active_manual_crop(self, manual: ManualCrop) -> CropBox:
         if self.motion_enabled_var.get() and self.active_crop_var.get() == "start":
@@ -1345,9 +1472,8 @@ class Application(tk.Tk):
                 and abs(manual.start.y - manual.end.y) < 1e-3
                 and abs(manual.start.size - manual.end.size) < 1e-3
             ):
-                auto_manual = self._auto_manual_current()
-                self.manual_crops[self.current_path] = auto_manual
-                manual = auto_manual
+                self._start_auto_detection(self.current_path, message="Analysiere Bewegung…")
+                return
         self._apply_manual_to_controls(manual)
         self._refresh_selected_button_state()
         self._refresh_crop_buttons()
@@ -1386,9 +1512,7 @@ class Application(tk.Tk):
                 and abs(manual.start.y - manual.end.y) < 1e-3
                 and abs(manual.start.size - manual.end.size) < 1e-3
             ):
-                auto_manual = self._auto_manual_current()
-                self.manual_crops[self.current_path] = auto_manual
-                self._apply_manual_to_controls(auto_manual)
+                self._start_auto_detection(self.current_path, message="Analysiere Bewegung…")
             else:
                 self._refresh_crop_buttons()
                 self._refresh_legend_state()
@@ -1411,7 +1535,7 @@ class Application(tk.Tk):
         new_crop = CropBox(x=x, y=y, size=size)
         manual = self.manual_crops.get(self.current_path)
         if manual is None:
-            manual = self._auto_manual_current()
+            return
         start = CropBox(manual.start.x, manual.start.y, manual.start.size)
         end = CropBox(manual.end.x, manual.end.y, manual.end.size)
         if self.motion_enabled_var.get():
@@ -1814,9 +1938,7 @@ class Application(tk.Tk):
     def _reset_crop_to_auto(self) -> None:
         if self.current_image is None or self.current_path is None:
             return
-        manual = self._auto_manual_current()
-        self.manual_crops[self.current_path] = manual
-        self._apply_manual_to_controls(manual)
+        self._start_auto_detection(self.current_path, message="Automatische Ausrichtung…")
 
     def _refresh_output_list(self) -> None:
         self.output_media_files.clear()
