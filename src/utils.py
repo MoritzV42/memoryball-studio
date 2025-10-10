@@ -68,21 +68,52 @@ def expand_crop_for_circle(crop: CropBox, circle_margin: float = ORIENTATION_CIR
     return CropBox(x=center_x - new_size / 2.0, y=center_y - new_size / 2.0, size=new_size)
 
 
-def crop_position_bounds(size: float, dimension: int, overflow_ratio: float = CROP_OVERFLOW_RATIO) -> Tuple[float, float]:
-    """Return the allowed coordinate range for a crop side with optional overflow."""
+def crop_position_bounds(
+    size: float,
+    dimension: int,
+    overflow_ratio: float = CROP_OVERFLOW_RATIO,
+    *,
+    axis: str = "x",
+    circle_margin: float = ORIENTATION_CIRCLE_MARGIN,
+) -> Tuple[float, float]:
+    """Return the allowed coordinate range for a crop side.
 
-    overflow = size * overflow_ratio
-    minimum = -overflow
-    maximum = dimension - size + overflow
+    The square crop may extend beyond the image bounds as long as the
+    orientation circle remains fully visible. ``axis`` must be either ``"x"``
+    or ``"y"`` and determines how the circle is aligned within the square.
+    ``overflow_ratio`` is currently ignored to keep the circle constrained.
+    """
+
+    size = max(0.0, float(size))
+    dimension = float(dimension)
+    margin = max(0.0, circle_margin) * size
+    if axis == "x":
+        minimum = -margin
+        maximum = dimension - size + margin
+    elif axis == "y":
+        minimum = 0.0
+        maximum = dimension - size + 2.0 * margin
+    else:  # pragma: no cover - defensive programming
+        raise ValueError("axis must be 'x' or 'y'")
     if maximum < minimum:
-        maximum = minimum
+        center = (minimum + maximum) / 2.0
+        minimum = maximum = center
     return minimum, maximum
 
 
-def max_crop_size(width: int, height: int) -> float:
-    """Return the maximum allowed crop size for a frame."""
+def max_crop_size(width: int, height: int, circle_margin: float = ORIENTATION_CIRCLE_MARGIN) -> float:
+    """Return the maximum allowed crop size for a frame.
 
-    return float(max(width, height))
+    The value is limited so that the orientation circle stays within the
+    image bounds while allowing the square crop itself to overflow.
+    """
+
+    factor = max(0.0, 1.0 - 2.0 * max(0.0, circle_margin))
+    if factor <= 0.0:
+        return float(min(width, height))
+    width_limit = width / factor
+    height_limit = height / factor
+    return float(min(max(width, height), width_limit, height_limit))
 
 
 def normalize_crop_with_overflow(
@@ -94,8 +125,8 @@ def normalize_crop_with_overflow(
     """Clamp a crop box while allowing configurable overflow beyond the image bounds."""
 
     size = clamp(crop_box.size, 1.0, max_crop_size(width, height))
-    min_x, max_x = crop_position_bounds(size, width, overflow_ratio)
-    min_y, max_y = crop_position_bounds(size, height, overflow_ratio)
+    min_x, max_x = crop_position_bounds(size, width, overflow_ratio, axis="x")
+    min_y, max_y = crop_position_bounds(size, height, overflow_ratio, axis="y")
     x = clamp(crop_box.x, min_x, max_x)
     y = clamp(crop_box.y, min_y, max_y)
     return CropBox(x=x, y=y, size=size)

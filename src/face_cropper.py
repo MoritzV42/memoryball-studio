@@ -22,7 +22,7 @@ except ImportError as exc:  # pragma: no cover
     mp = None
     _IMPORT_ERROR = exc
 
-from .utils import CropBox, clamp, expand_crop_for_circle, max_crop_size
+from .utils import CropBox, clamp, crop_position_bounds, expand_crop_for_circle, max_crop_size
 
 
 @dataclass(slots=True)
@@ -305,8 +305,10 @@ class FaceCropper:
         size = clamp(expanded.size, min_size, max_size)
         center_x = expanded.x + expanded.size / 2
         center_y = expanded.y + expanded.size / 2
-        x = clamp(center_x - size / 2, 0.0, max(0.0, width - size))
-        y = clamp(center_y - size / 2, 0.0, max(0.0, height - size))
+        min_x, max_x = crop_position_bounds(size, width, axis="x")
+        min_y, max_y = crop_position_bounds(size, height, axis="y")
+        x = clamp(center_x - size / 2, min_x, max_x)
+        y = clamp(center_y - size / 2, min_y, max_y)
         return CropBox(x=x, y=y, size=size)
 
     def _filter_relevant_detections(
