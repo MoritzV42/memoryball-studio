@@ -174,6 +174,7 @@ class Application(tk.Tk):
 
         self._build_layout()
         self._update_motion_direction_state()
+        self._load_reference_preview()
         self.after(1000, self._maybe_start_tutorial)
         self.active_crop_var.trace_add("write", self._on_active_crop_change)
 
@@ -341,6 +342,28 @@ class Application(tk.Tk):
             foreground=[("selected", "#ffffff")],
         )
 
+    def _find_reference_image(self) -> Optional[Path]:
+        base_dir = Path(__file__).resolve().parent.parent
+        reference_dir = base_dir / "Referenz"
+        if reference_dir.is_dir():
+            for candidate in sorted(reference_dir.iterdir()):
+                if candidate.is_file() and is_image(candidate):
+                    return candidate
+        return None
+
+    def _load_reference_preview(self) -> None:
+        reference = self._find_reference_image()
+        if reference is None:
+            self._show_placeholder("Kein Bild ausgewählt.")
+            return
+        try:
+            self._load_preview(self._normalize_path(reference))
+        except Exception:
+            self._show_placeholder("Kein Bild ausgewählt.")
+            return
+        self.progress_var.set("Referenzbild geladen. Wähle eine Datei oder einen Ordner aus.")
+        self.crop_info_var.set("Passe den Ausschnitt oder lade eigene Dateien.")
+
     def _build_layout(self) -> None:
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
@@ -372,7 +395,7 @@ class Application(tk.Tk):
         io_header.grid(row=0, column=1, rowspan=2, sticky="new", padx=(24, 0))
         io_header.columnconfigure(1, weight=1)
 
-        ttk.Label(io_header, text="Eingabeordner", style="Section.TLabel").grid(
+        ttk.Label(io_header, text="Eingabequelle", style="Section.TLabel").grid(
             row=0, column=0, sticky="w"
         )
         self.input_entry = ttk.Entry(io_header, textvariable=self.input_var, width=32)
@@ -1212,6 +1235,8 @@ class Application(tk.Tk):
         return indices
 
     def _default_output_for(self, path: Path) -> Path:
+        if path.is_file():
+            return path.parent / f"Converted {path.stem}"
         return path.parent / f"Converted {path.name}"
 
     def _resolve_output_dir(self) -> Optional[Path]:
@@ -1238,7 +1263,25 @@ class Application(tk.Tk):
     # Folder handling
     # ------------------------------------------------------------------
     def _choose_input(self) -> None:
-        selection = filedialog.askdirectory(title="Eingabeordner wählen")
+        choice = messagebox.askyesnocancel(
+            "Eingabe wählen",
+            "Möchtest du einen kompletten Ordner laden?\n"
+            "Ja = Ordner, Nein = einzelne Datei.",
+            parent=self,
+        )
+        if choice is None:
+            return
+        if choice:
+            selection = filedialog.askdirectory(title="Eingabeordner wählen")
+        else:
+            selection = filedialog.askopenfilename(
+                title="Eingabedatei wählen",
+                filetypes=(
+                    ("Unterstützte Bilder", "*.jpg *.jpeg *.png *.webp *.heic *.heif"),
+                    ("Unterstützte Videos", "*.mp4 *.mov *.mkv *.avi"),
+                    ("Alle Dateien", "*.*"),
+                ),
+            )
         if selection:
             self._set_input_path(Path(selection))
 
@@ -1259,7 +1302,7 @@ class Application(tk.Tk):
         self._refresh_output_list()
 
     def _load_media_files(self) -> None:
-        import_message = "Importiere Ordner…"
+        import_message = "Importiere Eingabe…"
         self._show_loading_overlay(import_message)
         self.update_idletasks()
         try:
@@ -1284,8 +1327,14 @@ class Application(tk.Tk):
             files = [self._normalize_path(path) for path in iter_media_files(self.input_path)]
             files.sort()
             self.media_files = files
+            base_for_display = (
+                self.input_path if self.input_path.is_dir() else self.input_path.parent
+            )
             for media in self.media_files:
-                display = media.relative_to(self.input_path)
+                try:
+                    display = media.relative_to(base_for_display)
+                except ValueError:
+                    display = Path(media.name)
                 index = len(self._list_paths)
                 iid = f"item-{index}"
                 thumbnail = self._thumbnail_for(media)
@@ -1815,7 +1864,7 @@ class Application(tk.Tk):
             messagebox.showinfo("Analyse", "Keine Bilder zum Analysieren gefunden.")
             return
         if self.input_path is None:
-            messagebox.showinfo("Analyse", "Bitte zuerst einen Eingabeordner wählen.")
+            messagebox.showinfo("Analyse", "Bitte zuerst eine Eingabequelle wählen.")
             return
         if self._bulk_auto_token is not None:
             messagebox.showinfo("Analyse", "Eine Analyse läuft bereits.")
@@ -2598,7 +2647,7 @@ class Application(tk.Tk):
 
     def _on_convert(self) -> None:
         if self.input_path is None:
-            messagebox.showerror("Fehler", "Bitte zuerst einen Eingabeordner wählen.")
+            messagebox.showerror("Fehler", "Bitte zuerst eine Eingabequelle wählen.")
             return
         output_dir = self._resolve_output_dir()
         if output_dir is None:
@@ -2608,7 +2657,7 @@ class Application(tk.Tk):
 
     def _on_convert_selected(self) -> None:
         if self.input_path is None:
-            messagebox.showerror("Fehler", "Bitte zuerst einen Eingabeordner wählen.")
+            messagebox.showerror("Fehler", "Bitte zuerst eine Eingabequelle wählen.")
             return
         output_dir = self._resolve_output_dir()
         if output_dir is None:
