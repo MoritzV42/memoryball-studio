@@ -363,6 +363,13 @@ class Application(tk.Tk):
             return
         self.progress_var.set("Referenzbild geladen. Wähle eine Datei oder einen Ordner aus.")
         self.crop_info_var.set("Passe den Ausschnitt oder lade eigene Dateien.")
+        if self.input_path is None and self.current_path is not None:
+            self.after(
+                400,
+                lambda path=self.current_path: self._start_auto_detection(
+                    path, message="Analysiere Referenz…"
+                ),
+            )
 
     def _build_layout(self) -> None:
         self.columnconfigure(0, weight=1)
@@ -1412,10 +1419,20 @@ class Application(tk.Tk):
         self._hide_loading_overlay()
 
     def _current_processing_options(self) -> ProcessingOptions:
-        assert self.input_path is not None
+        base_path: Path
+        if self.input_path is not None:
+            base_path = self.input_path
+        elif self.current_path is not None:
+            base_path = self.current_path
+        else:
+            base_path = Path.cwd()
+        base_path = self._normalize_path(base_path)
+        output_dir = self._resolve_output_dir()
+        if output_dir is None:
+            output_dir = self._default_output_for(base_path)
         return ProcessingOptions(
-            input_path=self.input_path,
-            output_dir=self._resolve_output_dir() or self._default_output_for(self.input_path),
+            input_path=base_path,
+            output_dir=output_dir,
             size=self.size_var.get(),
             face_detection_enabled=True,
             detection_mode="auto",
@@ -1460,7 +1477,7 @@ class Application(tk.Tk):
         return self._normalize_manual_for_image(image, manual, overflow=0.0)
 
     def _start_auto_detection(self, path: Path, *, message: str) -> None:
-        if self.current_image is None or self.input_path is None:
+        if self.current_image is None:
             return
         image = self.current_image.copy()
         options = self._current_processing_options()
@@ -1516,7 +1533,7 @@ class Application(tk.Tk):
         self._hide_loading_overlay()
 
     def _auto_manual_current(self) -> ManualCrop:
-        assert self.current_image is not None and self.input_path is not None
+        assert self.current_image is not None
         options = self._current_processing_options()
         cropper = self._get_preview_cropper()
         return self._compute_auto_manual_for_image(self.current_image, options, cropper)
@@ -1984,14 +2001,20 @@ class Application(tk.Tk):
         x = center_x - size / 2
         y = center_y - size / 2
         min_x, max_x = crop_position_bounds(
-            size, width, overflow_ratio=self.PREVIEW_OVERFLOW_RATIO
+            size,
+            width,
+            overflow_ratio=self.PREVIEW_OVERFLOW_RATIO,
+            axis="x",
         )
         min_y, max_y = crop_position_bounds(
-            size, height, overflow_ratio=self.PREVIEW_OVERFLOW_RATIO
+            size,
+            height,
+            overflow_ratio=self.PREVIEW_OVERFLOW_RATIO,
+            axis="y",
         )
         x = clamp(x, min_x, max_x)
         y = clamp(y, min_y, max_y)
-        return CropBox(x=x, y=y, size=size)
+        return self._normalize_crop_box(CropBox(x=x, y=y, size=size), width, height, overflow=0.0)
 
     def _normalize_crop_box(
         self,
@@ -2021,10 +2044,16 @@ class Application(tk.Tk):
         max_side = max(1, max(width, height))
         size_ratio = clamp(crop.size / max_side, 0.01, 1.0)
         min_x, max_x = crop_position_bounds(
-            crop.size, width, overflow_ratio=self.PREVIEW_OVERFLOW_RATIO
+            crop.size,
+            width,
+            overflow_ratio=self.PREVIEW_OVERFLOW_RATIO,
+            axis="x",
         )
         min_y, max_y = crop_position_bounds(
-            crop.size, height, overflow_ratio=self.PREVIEW_OVERFLOW_RATIO
+            crop.size,
+            height,
+            overflow_ratio=self.PREVIEW_OVERFLOW_RATIO,
+            axis="y",
         )
         range_x = max_x - min_x
         range_y = max_y - min_y
@@ -2155,10 +2184,16 @@ class Application(tk.Tk):
         ratio = clamp(self.size_ratio.get(), 0.01, 1.0)
         size = ratio * max_side
         min_x, max_x = crop_position_bounds(
-            size, width, overflow_ratio=self.PREVIEW_OVERFLOW_RATIO
+            size,
+            width,
+            overflow_ratio=self.PREVIEW_OVERFLOW_RATIO,
+            axis="x",
         )
         min_y, max_y = crop_position_bounds(
-            size, height, overflow_ratio=self.PREVIEW_OVERFLOW_RATIO
+            size,
+            height,
+            overflow_ratio=self.PREVIEW_OVERFLOW_RATIO,
+            axis="y",
         )
         norm_x = clamp(self.offset_x.get(), 0.0, 1.0)
         norm_y = clamp(self.offset_y.get(), 0.0, 1.0)
@@ -2166,7 +2201,7 @@ class Application(tk.Tk):
         range_y = max_y - min_y
         x = min_x + norm_x * range_x if range_x else min_x
         y = min_y + norm_y * range_y if range_y else min_y
-        new_crop = CropBox(x=x, y=y, size=size)
+        new_crop = self._normalize_crop_box(CropBox(x=x, y=y, size=size), width, height, overflow=0.0)
         manual = self.manual_crops.get(self.current_path)
         if manual is None:
             return
