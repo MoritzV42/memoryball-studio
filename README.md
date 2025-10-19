@@ -139,3 +139,18 @@ pytest
 2. Repository klonen
 3. `pip install -r requirements.txt`
 4. Beispiel: `python main.py --input "D:\Rohmaterial" --output "D:\MemoryBall" --size 480 --fps keep --threads 6 --min-face 0.1`
+
+## Windows-Installer (Setup-EXE)
+
+Für einen komfortablen Windows-Installer (`MemoryBallStudioSetup.exe`), der das Repository
+nach `%LOCALAPPDATA%\MemoryBallStudio` lädt, alle Python-Abhängigkeiten installiert und
+ein Desktop-Icon erstellt, steht unter `installer/` ein PyInstaller-Buildskript bereit:
+
+```bash
+python installer/build.py
+```
+
+Nach erfolgreichem Build befindet sich die EXE unter `dist/MemoryBallStudioSetup.exe`. Die
+ausgeführte EXE lädt beim Start das aktuelle Repository von GitHub herunter, richtet eine
+virtuelle Umgebung ein und verknüpft das Icon mit `start.py`, sodass die Anwendung per
+Doppelklick gestartet werden kann.
