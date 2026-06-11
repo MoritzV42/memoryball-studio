@@ -2,6 +2,16 @@
 
 memoryball-autocrop ist ein CLI- und GUI-Tool zum automatischen Zuschneiden von Fotos und Videos auf quadratische 480×480 Pixel. Gesichter werden mit MediaPipe erkannt, der Crop folgt dem Gesicht dank Glättung. Videos werden über ffmpeg kodiert, Audio bleibt optional erhalten.
 
+## Wofür? Der Memory Orb
+
+<img src="docs/memory-orb.jpg" width="420" alt="Memory Orb — Kristallkugel mit rundem Display, Fotos/Videos per App hochladbar">
+
+Ein **Memory Orb** ist eine handtellergroße Kristallkugel mit eingebautem runden Display: Fotos und kurze Videos werden per App/WLAN hochgeladen und laufen als leuchtende Erinnerungs-Galerie in der Kugel — ein beliebtes Geschenk zu Hochzeit, Geburtstag oder Weihnachten.
+
+Der Haken: Das Display ist **rund und klein** (typisch 480×480), und die App schneidet Fotos stumpf mittig zu — Köpfe sind ab, Gesichter am Rand. Genau das löst dieses Tool: ein ganzer Foto-Ordner rein, **gesichtszentrierte 480×480-Crops** raus, fertig für den Upload.
+
+➡️ **Memory Orb kaufen:** z.&nbsp;B. [auf Amazon (2.76″ Crystal Video Orb, WiFi-Upload)](https://www.amazon.com/Memory-Orb-Ball-Personalized-Anniversary/dp/B0FRLTJ9NM) — vergleichbare Modelle gibt es auch auf AliExpress/Etsy. *(Kein Affiliate-Link.)*
+
 ## Features
 
 * Stapelverarbeitung für Bilder (JPG/PNG/HEIC/WebP) und Videos (MP4/MOV/MKV/AVI)
