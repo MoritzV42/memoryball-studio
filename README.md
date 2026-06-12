@@ -1,93 +1,93 @@
-# memoryball-autocrop
+# memoryball-studio
 
-memoryball-autocrop ist ein CLI- und GUI-Tool zum automatischen Zuschneiden von Fotos und Videos auf quadratische 480×480 Pixel. Gesichter werden mit MediaPipe erkannt, der Crop folgt dem Gesicht dank Glättung. Videos werden über ffmpeg kodiert, Audio bleibt optional erhalten.
+Ever gifted (or received) a Memory Orb — that little crystal ball with the round 480×480 display — only to find the manufacturer app crops every photo dead-center? Heads chopped off, faces pushed to the edge, memories ruined. memoryball-studio fixes that: point it at a whole photo folder and get **face-centered 480×480 crops** out, ready for upload — entirely on your machine.
 
-## Wofür? Der Memory Orb
+memoryball-studio is a CLI and GUI tool for automatically cropping photos and videos to square 480×480 pixels. Faces are detected with MediaPipe, and the crop follows the face thanks to smoothing. Videos are encoded via ffmpeg, with audio optionally preserved.
 
-<img src="docs/memory-orb.jpg" width="420" alt="Memory Orb — Kristallkugel mit rundem Display, Fotos/Videos per App hochladbar">
+## What is a Memory Orb?
 
-Ein **Memory Orb** ist eine handtellergroße Kristallkugel mit eingebautem runden Display: Fotos und kurze Videos werden per App/WLAN hochgeladen und laufen als leuchtende Erinnerungs-Galerie in der Kugel — ein beliebtes Geschenk zu Hochzeit, Geburtstag oder Weihnachten.
+<img src="docs/memory-orb.jpg" width="420" alt="Memory Orb — crystal ball with a round display, photos/videos uploadable via app">
 
-Der Haken: Das Display ist **rund und klein** (typisch 480×480), und die App schneidet Fotos stumpf mittig zu — Köpfe sind ab, Gesichter am Rand. Genau das löst dieses Tool: ein ganzer Foto-Ordner rein, **gesichtszentrierte 480×480-Crops** raus, fertig für den Upload.
+A **Memory Orb** is a palm-sized crystal ball with a built-in round display: photos and short videos are uploaded via app/WiFi and play as a glowing memory gallery inside the ball — a popular gift for weddings, birthdays, or Christmas.
 
-➡️ **Memory Orb kaufen:** z.&nbsp;B. [auf Amazon (2.76″ Crystal Video Orb, WiFi-Upload)](https://www.amazon.com/Memory-Orb-Ball-Personalized-Anniversary/dp/B0FRLTJ9NM) — vergleichbare Modelle gibt es auch auf AliExpress/Etsy. *(Kein Affiliate-Link.)*
+➡️ **Buy a Memory Orb:** e.g. [on Amazon (2.76″ Crystal Video Orb, WiFi upload)](https://www.amazon.com/Memory-Orb-Ball-Personalized-Anniversary/dp/B0FRLTJ9NM) — comparable models are also available on AliExpress/Etsy. *(No affiliate link.)*
 
 ## Features
 
-* Stapelverarbeitung für Bilder (JPG/PNG/HEIC/WebP) und Videos (MP4/MOV/MKV/AVI)
-* Automatische Gesichtserkennung mit MediaPipe Face Detection (Fallback über OpenCV-Haar-Cascades, falls MediaPipe nicht verfügbar ist)
-* Glättung der Bounding-Box via exponentiellem gleitenden Mittel
-* Fallback: sicherer Center-Crop, optional mit Padding
-* Video-Export über ffmpeg inkl. Audio-Kontrolle
-* Multithreading für Bilder, komfortable Tkinter-Oberfläche mit Vorschau
-* Manuelle Anpassung des Zuschnitts pro Bild inkl. Vorschau
+* Batch processing for images (JPG/PNG/HEIC/WebP) and videos (MP4/MOV/MKV/AVI)
+* Automatic face detection with MediaPipe Face Detection (falls back to OpenCV Haar cascades if MediaPipe is unavailable)
+* Bounding-box smoothing via exponential moving average
+* Fallback: safe center crop, optionally with padding
+* Video export via ffmpeg including audio control
+* Multithreading for images, convenient Tkinter GUI with preview
+* Manual per-image crop adjustment with preview
 
 ## Installation
 
-Voraussetzung: Python 3.10 oder neuer sowie ffmpeg/ffprobe auf dem System.
+Prerequisites: Python 3.10 or newer and ffmpeg/ffprobe on your system.
 
 ```bash
 ffmpeg -version
 ```
 
-Falls ffmpeg fehlt:
+If ffmpeg is missing:
 
-* **Windows**: `choco install ffmpeg` oder ZIP von [ffmpeg.org](https://ffmpeg.org) entpacken und PATH setzen
+* **Windows**: `choco install ffmpeg` or unpack the ZIP from [ffmpeg.org](https://ffmpeg.org) and add it to PATH
 * **macOS**: `brew install ffmpeg`
 * **Linux**: `sudo apt install ffmpeg`
 
-Projekt installieren:
+Install the project:
 
 ```bash
 git clone <repo>
-cd memoryball-autocrop
+cd memoryball-studio
 pip install -r requirements.txt
 ```
 
-## CLI-Nutzung
+## CLI usage
 
 ```bash
 python main.py --input "C:\in" --output "C:\out" --mode auto --size 480 --min-face 0.12 \
   --quality 90 --threads 4 --fps keep --image-format jpg --video-ext mp4 --face-priority largest
 ```
 
-Wichtige Parameter:
+Key parameters:
 
-| Parameter | Beschreibung |
-|-----------|--------------|
-| `--input` | Datei oder Ordner (rekursiv) |
-| `--output` | Zielordner (wird angelegt) |
-| `--mode` | `auto`, `center`, `manual` (manuell nutzt `--crop-*` als Startwerte) |
-| `--size` | Ziel-Kantenlänge (Standard 480) |
-| `--fps` | Zahl oder `keep` |
-| `--quality` | Bildqualität (1–100) |
-| `--crf` | Video-CRF (Standard 20) |
-| `--preset` | ffmpeg-Preset (Standard `medium`) |
-| `--min-face` | Minimale Gesichtsfläche relativ zu kleinster Bildkante |
-| `--face-priority` | Auswahl bei mehreren Gesichtern (`largest`/`center`/`all`) |
-| `--detection` | Erkennungsmodus (`face`/`person`/`none`) |
-| `--threads` | Threads für Bilder |
-| `--pad` | Optionales Padding (z. B. `0.05` für 5 %) |
-| `--image-format` | `jpg`, `png` oder `webp` |
-| `--video-ext` | Aktuell `mp4` |
+| Parameter | Description |
+|-----------|-------------|
+| `--input` | File or folder (recursive) |
+| `--output` | Output folder (created if missing) |
+| `--mode` | `auto`, `center`, `manual` (manual uses `--crop-*` as starting values) |
+| `--size` | Target edge length (default 480) |
+| `--fps` | Number or `keep` |
+| `--quality` | Image quality (1–100) |
+| `--crf` | Video CRF (default 20) |
+| `--preset` | ffmpeg preset (default `medium`) |
+| `--min-face` | Minimum face area relative to the smallest image edge |
+| `--face-priority` | Selection when multiple faces are found (`largest`/`center`/`all`) |
+| `--detection` | Detection mode (`face`/`person`/`none`) |
+| `--threads` | Threads for images |
+| `--pad` | Optional padding (e.g. `0.05` for 5%) |
+| `--image-format` | `jpg`, `png`, or `webp` |
+| `--video-ext` | Currently `mp4` |
 | `--keep-audio` | `on`/`off` |
-| `--log-level` | `info` oder `debug` |
+| `--log-level` | `info` or `debug` |
 
-### Beispiele
+### Examples
 
-Nur Bilder verarbeiten:
+Process images only:
 
 ```bash
 python main.py --input ./bilder --output ./export --image-format jpg --no-face
 ```
 
-Nur Videos mit Audio behalten:
+Videos only, keeping audio:
 
 ```bash
 python main.py --input ./videos --output ./export --fps keep --keep-audio on --threads 2
 ```
 
-Gemischter Ordner mit Padding und reduzierter FPS:
+Mixed folder with padding and reduced FPS:
 
 ```bash
 python main.py --input ./medien --output ./export --pad 0.05 --fps 30 --quality 95
@@ -95,7 +95,7 @@ python main.py --input ./medien --output ./export --pad 0.05 --fps 30 --quality 
 
 ## GUI
 
-Die GUI startet automatisch, sobald `main.py` ohne Parameter geöffnet wird (z. B. per Doppelklick). Alternativ kann sie auch explizit über die Konsole gestartet werden:
+The GUI starts automatically when `main.py` is opened without parameters (e.g. via double-click). Alternatively, it can be launched explicitly from the console:
 
 ```bash
 python main.py --gui
@@ -103,52 +103,51 @@ python main.py --gui
 
 **Workflow:**
 
-1. Eingabeordner wählen – der Ausgabeordner wird automatisch als `Converted <Ordnername>` vorgeschlagen.
-2. Bilder in der Liste auswählen, automatische Erkennung prüfen und bei Bedarf mit Zoom- und Positions-Slidern anpassen.
-3. Videos werden automatisch mitbearbeitet und nutzen die gleichen Einstellungen.
-4. Mit „Konvertieren“ die Ausgabe erstellen; der Fortschritt wird angezeigt.
+1. Choose an input folder — the output folder is automatically suggested as `Converted <folder name>`.
+2. Select images in the list, review the automatic detection, and adjust with the zoom and position sliders if needed.
+3. Videos are processed automatically and use the same settings.
+4. Click "Convert" to create the output; progress is displayed.
 
-### Start per Doppelklick
+### Launch via double-click
 
-* Stelle sicher, dass Python 3.10+ installiert ist und dass `python` im `%PATH%` liegt.
-* Starte das Tool über `start.py` (Doppelklick oder `python start.py`).
-  * Beim ersten Start versucht die Datei zunächst, die Anwendung direkt zu starten.
-  * Schlägt das fehl, legt sie automatisch eine virtuelle Umgebung im Projektordner an,
-    installiert alle Abhängigkeiten aus `requirements.txt` und startet danach erneut.
-  * Sobald der Start klappt, wird bei späteren Aufrufen ausschließlich die Anwendung
-    gestartet – eine erneute Installation findet nur statt, wenn der Startcode
-    einen Fehler zurückgibt.
-* Auch beim direkten Start über `main.py` werden Fehler weiterhin in
-  `startup-errors.log` protokolliert.
+* Make sure Python 3.10+ is installed and `python` is on your `%PATH%`.
+* Launch the tool via `start.py` (double-click or `python start.py`).
+  * On first launch, the script first tries to start the application directly.
+  * If that fails, it automatically creates a virtual environment in the project folder,
+    installs all dependencies from `requirements.txt`, and then starts again.
+  * Once the launch succeeds, subsequent runs only start the application —
+    a reinstall only happens if the startup code returns an error.
+* Even when launching directly via `main.py`, errors are still logged to
+  `startup-errors.log`.
 
-## Performance-Tipps
+## Performance tips
 
-* Erhöhe `--threads` für viele Bilder (CPU-Kerne berücksichtigen)
-* Nutze schnellere ffmpeg-Presets (`--preset fast`) für schnelleren Videoexport
-* Bei quadratischen Quellen greift ein schneller Pfad: lediglich Resize statt Crop
+* Increase `--threads` for many images (consider your CPU core count)
+* Use faster ffmpeg presets (`--preset fast`) for quicker video export
+* Square sources take a fast path: just a resize instead of a crop
 
 ## Troubleshooting
 
-* **HEIC wird nicht gelesen** – Stelle sicher, dass `pillow-heif` installiert ist und die Datei nicht DRM-geschützt ist.
-* **Beschädigte Metadaten** – ffmpeg/ffprobe können bei fehlerhaften Dateien abbrechen. Die Anwendung loggt Warnungen und verarbeitet den Rest weiter.
-* **Gesicht wird nicht erkannt** – Erhöhe `--min-face` nicht zu stark, nutze `--face-priority center` oder deaktiviere die Erkennung (`--no-face`).
-* **`ModuleNotFoundError: No module named 'cv2'`** – OpenCV ist nicht installiert. Führe `python -m pip install -r requirements.txt` in deinem Projektordner aus.
-* **`pip install mediapipe` schlägt auf Windows/Python 3.12 fehl** – Die Installation der Requirements funktioniert trotzdem. In diesem Fall nutzt die App automatisch die OpenCV-Haar-Cascade-Erkennung.
+* **HEIC files are not read** — Make sure `pillow-heif` is installed and the file is not DRM-protected.
+* **Corrupted metadata** — ffmpeg/ffprobe may abort on broken files. The application logs warnings and keeps processing the rest.
+* **Face not detected** — Don't raise `--min-face` too much, use `--face-priority center`, or disable detection (`--no-face`).
+* **`ModuleNotFoundError: No module named 'cv2'`** — OpenCV is not installed. Run `python -m pip install -r requirements.txt` in your project folder.
+* **`pip install mediapipe` fails on Windows/Python 3.12** — Installing the requirements still works. In that case the app automatically uses OpenCV Haar cascade detection.
 
 ## Tests
 
-Einfacher Testlauf (erstellt Dummy-Bilder/-Videos und prüft die Ausgabegrößen):
+Simple test run (creates dummy images/videos and checks the output sizes):
 
 ```bash
 pytest
 ```
 
-## Schritt-für-Schritt lokal
+## Step by step, locally
 
-1. ffmpeg installieren (siehe oben)
-2. Repository klonen
+1. Install ffmpeg (see above)
+2. Clone the repository
 3. `pip install -r requirements.txt`
-4. Beispiel: `python main.py --input "D:\Rohmaterial" --output "D:\MemoryBall" --size 480 --fps keep --threads 6 --min-face 0.1`
+4. Example: `python main.py --input "D:\Rohmaterial" --output "D:\MemoryBall" --size 480 --fps keep --threads 6 --min-face 0.1`
 
 <!-- PORTFOLIO-LINKS:START -->
 ## More open-source tools by Moritz Voigt
