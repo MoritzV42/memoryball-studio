@@ -158,5 +158,5 @@ pytest
 - **[ingpad](https://github.com/MoritzV42/ingpad)** — A patient AI tutor on a canvas: it reads your handwriting, checks every step of a technical exercise, and explains what is missing — solve, don’t copy.
 - **[agent-browser](https://github.com/MoritzV42/agent-browser)** — Let your AI coding agent drive your real Chrome — click, fill, screenshot, read the console & network — from any MCP-capable agent.
 
-All free & open source, built in public → **[moritzvoigt.infinityspace42.de](https://moritzvoigt.infinityspace42.de)**
+All free & open source, built in public → **[opensource.infinityspace42.de](https://opensource.infinityspace42.de)**
 <!-- PORTFOLIO-LINKS:END -->
